@@ -12,6 +12,7 @@ as instructions.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import time
@@ -34,6 +35,23 @@ def _git_build_hash() -> str:
     return os.environ.get("BUILD_SHA", "unknown")
 
 
+# P1 L6 — the build hash cannot change under a running process (the
+# deployed commit is fixed for the process lifetime), so resolve it
+# ONCE and reuse it for every turn. The one resolution still runs the
+# synchronous git subprocess, but via asyncio.to_thread — the event
+# loop is never blocked, not even on the first turn. A failed
+# resolution ("unknown" / $BUILD_SHA fallback) is cached too: retrying
+# a failing `git rev-parse` on every turn would just re-pay the cost.
+_BUILD_HASH_CACHE: str | None = None
+
+
+async def _cached_build_hash() -> str:
+    global _BUILD_HASH_CACHE
+    if _BUILD_HASH_CACHE is None:
+        _BUILD_HASH_CACHE = await asyncio.to_thread(_git_build_hash)
+    return _BUILD_HASH_CACHE
+
+
 async def _production_status(db) -> dict:
     db_ok = False
     try:
@@ -41,7 +59,7 @@ async def _production_status(db) -> dict:
         db_ok = True
     except Exception:
         db_ok = False
-    return {"build_hash": _git_build_hash(), "db_ok": db_ok}
+    return {"build_hash": await _cached_build_hash(), "db_ok": db_ok}
 
 
 async def _funnel_7d(db) -> dict:
@@ -110,18 +128,38 @@ async def _recent_loop_failures_7d(db) -> dict:
         return {"count": 0, "last_error_class": None}
 
 
-async def build_state_block(db) -> str:
-    prod, funnel, alerts, blockers, backlog, loop_fail = (
-        await _production_status(db),
-        await _funnel_7d(db),
-        await _alerts_7d(db),
-        await _open_blockers(db),
-        await _parked_backlog(db),
-        await _recent_loop_failures_7d(db),
+async def build_state_block(db, user_tz: str | None = None) -> str:
+    # P1 L6 — the six helpers are independent (each reads different
+    # collections and each degrades to empty on its own error), so run
+    # them concurrently instead of awaiting one-by-one: six sequential
+    # Mongo round-trips become one round-trip of latency. Each helper
+    # still catches its own exceptions, so gather() here cannot fail
+    # the turn on a single helper's error (only a cancellation, which
+    # SHOULD propagate, can escape it).
+    prod, funnel, alerts, blockers, backlog, loop_fail = await asyncio.gather(
+        _production_status(db),
+        _funnel_7d(db),
+        _alerts_7d(db),
+        _open_blockers(db),
+        _parked_backlog(db),
+        _recent_loop_failures_7d(db),
     )
+    # P0 audit fix (2026-11-25, D3 residual) — state_as_of used to be
+    # UTC-only even though the router already passes the user's
+    # timezone into the turn (engine.py passes user_tz through). Render
+    # it in the user's zone, with the zone name attached so the stamp
+    # is unambiguous. Invalid/missing zone → UTC, never break the turn
+    # over a clock.
+    try:
+        from zoneinfo import ZoneInfo
+        _tz = ZoneInfo(user_tz) if user_tz else timezone.utc
+        _tz_name = user_tz if user_tz else "UTC"
+    except Exception:                                          # noqa: BLE001
+        _tz, _tz_name = timezone.utc, "UTC"
+    _state_as_of = datetime.now(timezone.utc).astimezone(_tz)
     lines = [
         STATE_OPEN,
-        f"state_as_of: {datetime.now(timezone.utc).isoformat()}",
+        f"state_as_of: {_state_as_of.isoformat()} ({_tz_name})",
         f"production: build_hash={prod['build_hash']} db_ok={prod['db_ok']}",
         (f"funnel_7d: stalls_flagged={funnel.get('stalls_flagged', 0)} "
          f"stalls_resolved={funnel.get('stalls_resolved', 0)} "

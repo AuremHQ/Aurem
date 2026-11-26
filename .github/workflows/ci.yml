@@ -433,7 +433,14 @@ jobs:
     name: Simulated-user QA (promptfoo)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [backend-tests]
+    # P1d (2026-11-25) — deliberately NO `needs: [backend-tests]` here.
+    # This job is self-contained: it installs its own deps and boots its
+    # own backend, and consumes nothing from backend-tests. With the
+    # `needs` in place, every backend-tests red — the standing
+    # pre-existing state — SKIPPED this job, so the suite could never
+    # run, let alone pass, and the deploy gate lost its only independent
+    # QA signal. The gate is NOT weakened: deploy-gate still needs BOTH
+    # jobs green before it runs.
 
     services:
       mongodb:
@@ -475,6 +482,24 @@ jobs:
           cache: "npm"
           cache-dependency-path: qa/simulated-user/package-lock.json
 
+      - name: Preflight — LLM key present (fail fast, name the secret)
+        # P1d (2026-11-25) — the probe runs the REAL orchestrator chain,
+        # so it needs a REAL LLM key. Both keys come from repo secrets;
+        # if neither is set the backend boots with empty keys and every
+        # probe call 500s, surfacing as 19 opaque promptfoo failures.
+        # Fail here instead, naming the exact secret. NEEDS-TEJI-DECISION
+        # if this step ever goes red: set repo secret OPENROUTER_API_KEY
+        # (or EMERGENT_LLM_KEY) — no code change can substitute for it.
+        env:
+          HAS_OPENROUTER_KEY: ${{ secrets.OPENROUTER_API_KEY != '' }}
+          HAS_EMERGENT_KEY: ${{ secrets.EMERGENT_LLM_KEY != '' }}
+        run: |
+          if [ "$HAS_OPENROUTER_KEY" != "true" ] && [ "$HAS_EMERGENT_KEY" != "true" ]; then
+            echo "::error::simulated-user QA needs a real LLM key — set repo secret OPENROUTER_API_KEY (or EMERGENT_LLM_KEY). The probe runs the real orchestrator chain, so a keyless run cannot pass."
+            exit 1
+          fi
+          echo "LLM key present (OPENROUTER_API_KEY set: $HAS_OPENROUTER_KEY; EMERGENT_LLM_KEY set: $HAS_EMERGENT_KEY)."
+
       - name: Install backend deps
         working-directory: backend
         run: |
@@ -487,12 +512,24 @@ jobs:
       - name: Boot backend in background
         working-directory: backend
         run: |
-          uvicorn main:app --host 0.0.0.0 --port 8001 &
+          # P1d (2026-11-25) — capture the boot log AND fail fast when the
+          # backend never becomes healthy. Previously the loop spun 60 s
+          # and the job proceeded blind against a dead backend, so a boot
+          # failure surfaced as opaque promptfoo connection errors instead
+          # of a boot log. /health is a real route (main.py healthz_root,
+          # returns {"ok": true}).
+          uvicorn main:app --host 0.0.0.0 --port 8001 > /tmp/backend.log 2>&1 &
           echo $! > /tmp/backend.pid
           for i in {1..60}; do
             curl -sf http://127.0.0.1:8001/health && break
             sleep 1
           done
+          if ! curl -sf http://127.0.0.1:8001/health; then
+            echo "::error::backend did not become healthy in 60 s — boot log tail:"
+            tail -100 /tmp/backend.log || true
+            exit 1
+          fi
+          echo "backend healthy"
 
       - name: Install promptfoo (dev-only)
         working-directory: qa/simulated-user
@@ -514,7 +551,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: simulated-user-qa-report
-          path: /tmp/aurem_qa_report.json
+          # P1d (2026-11-25) — include the boot log so a fail-fast boot
+          # failure is diagnosable from the artifact, not just the log tail.
+          path: |
+            /tmp/aurem_qa_report.json
+            /tmp/backend.log
           retention-days: 14
 
 

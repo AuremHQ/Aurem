@@ -475,6 +475,11 @@ import asyncio
 import json
 import httpx
 
+# P1/L3 — shared pooled HTTP clients (see services/llm/_http.py).
+# Imported here, next to this file's other mid-file imports, so the
+# lazy-import convention inside _call_deepseek is untouched.
+from ._http import get_shared_client
+
 # ─── DeepSeek direct API config ──────────────────────────────────────
 # Iter 212m-51 — DeepSeek direct API as second-hop fallback.
 # Independent vendor (api.deepseek.com, separate billing account from
@@ -523,10 +528,12 @@ async def _call_deepseek_direct(
     # Playbook-prescribed timeout (30s standard; 120s only for reasoning).
     timeout_s = float(os.getenv("DEEPSEEK_DIRECT_TIMEOUT_S", "30.0"))
     _t0 = time.monotonic()
-    async with httpx.AsyncClient(timeout=timeout_s) as c:
-        r = await c.post(_DEEPSEEK_DIRECT_URL, headers=headers, json=payload)
-        r.raise_for_status()
-        data = r.json()
+    # P1/L3 — shared pooled client (was: fresh AsyncClient per call).
+    # Never closed here.
+    _client = get_shared_client(timeout_s)
+    r = await _client.post(_DEEPSEEK_DIRECT_URL, headers=headers, json=payload)
+    r.raise_for_status()
+    data = r.json()
     _latency_ms = (time.monotonic() - _t0) * 1000
     msg = data["choices"][0]["message"]
     # 2026-08-25 — same defensive guard as `_call_deepseek` below: a
@@ -664,70 +671,73 @@ async def _call_deepseek(messages: list, system: str = "",
         payload = _build_payload(cand_model, with_provider)
         _t0 = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=_LLM_TIMEOUT_S) as c:
-                # Per-model: 1 retry on transient errors (unchanged
-                # legacy behaviour for the primary).
-                for attempt in range(1, _MAX_RETRIES + 2):
+            # P1/L3 — shared pooled client (was: fresh AsyncClient per
+            # candidate attempt). The retry loop reuses the same
+            # client; it is NEVER closed here.
+            _client = get_shared_client(_LLM_TIMEOUT_S)
+            # Per-model: 1 retry on transient errors (unchanged
+            # legacy behaviour for the primary).
+            for attempt in range(1, _MAX_RETRIES + 2):
+                try:
+                    r = await _client.post(OPENROUTER_URL, headers=headers, json=payload)
+                    r.raise_for_status()
+                    data = r.json()
+                    served_by = cand_model
+                    _latency_ms = (time.monotonic() - _t0) * 1000
+                    # Iter 309 · Pre-Phase-1 — loop-token accounting.
+                    # If this call is happening inside a loop (see
+                    # loop_engine._with_budget's contextvars scope),
+                    # tag the token usage against loop_id + phase.
+                    # No-op for regular chat/scaffold callers.
                     try:
-                        r = await c.post(OPENROUTER_URL, headers=headers, json=payload)
-                        r.raise_for_status()
-                        data = r.json()
-                        served_by = cand_model
-                        _latency_ms = (time.monotonic() - _t0) * 1000
-                        # Iter 309 · Pre-Phase-1 — loop-token accounting.
-                        # If this call is happening inside a loop (see
-                        # loop_engine._with_budget's contextvars scope),
-                        # tag the token usage against loop_id + phase.
-                        # No-op for regular chat/scaffold callers.
-                        try:
-                            from services.loop_token_ledger import log_llm_usage
-                            await log_llm_usage(
-                                cand_model,
-                                (data or {}).get("usage") or {},
-                                temperature=temperature,
-                            )
-                        except Exception as _e:
-                            # Ledger failure is non-fatal for chat/scaffold
-                            # (fail-open), but should surface at debug so
-                            # ops can diagnose a broken loop-token track.
-                            logger.debug(
-                                "[silent-catch] llm.py:738 in _call_deepseek "
-                                "— loop_token_ledger.log_llm_usage failed: %r",
-                                _e,
-                            )
-                        # 2026-09-27 P0 — REAL per-user cost ledger.
-                        # Unconditional (unlike log_llm_usage above,
-                        # which is loop-only) — this is the actual fix
-                        # for "casual"/"advisor" quick-reply chat turns
-                        # (this exact code path) burning real tokens
-                        # that never showed up on the token meter.
-                        try:
-                            from services.loop_token_ledger import log_real_usage
-                            await log_real_usage(
-                                cand_model,
-                                (data or {}).get("usage") or {},
-                                generation_id=(data or {}).get("id"),
-                                feature=feature,
-                                latency_ms=_latency_ms,
-                                status="ok",
-                            )
-                        except Exception as _e:
-                            logger.debug(
-                                "[silent-catch] _call_deepseek — "
-                                "loop_token_ledger.log_real_usage failed: %r", _e,
-                            )
-                        break
-                    except Exception as e:
-                        retryable, status = _retryable(e)
-                        if not retryable or attempt > _MAX_RETRIES:
-                            raise
-                        delay = _retry_delay(attempt)
-                        logger.warning(
-                            "OpenRouter transient failure on %s (status=%s, attempt %d/%d) — "
-                            "retrying in %.2fs: %r",
-                            cand_model, status, attempt, _MAX_RETRIES + 1, delay, e,
+                        from services.loop_token_ledger import log_llm_usage
+                        await log_llm_usage(
+                            cand_model,
+                            (data or {}).get("usage") or {},
+                            temperature=temperature,
                         )
-                        await asyncio.sleep(delay)
+                    except Exception as _e:
+                        # Ledger failure is non-fatal for chat/scaffold
+                        # (fail-open), but should surface at debug so
+                        # ops can diagnose a broken loop-token track.
+                        logger.debug(
+                            "[silent-catch] llm.py:738 in _call_deepseek "
+                            "— loop_token_ledger.log_llm_usage failed: %r",
+                            _e,
+                        )
+                    # 2026-09-27 P0 — REAL per-user cost ledger.
+                    # Unconditional (unlike log_llm_usage above,
+                    # which is loop-only) — this is the actual fix
+                    # for "casual"/"advisor" quick-reply chat turns
+                    # (this exact code path) burning real tokens
+                    # that never showed up on the token meter.
+                    try:
+                        from services.loop_token_ledger import log_real_usage
+                        await log_real_usage(
+                            cand_model,
+                            (data or {}).get("usage") or {},
+                            generation_id=(data or {}).get("id"),
+                            feature=feature,
+                            latency_ms=_latency_ms,
+                            status="ok",
+                        )
+                    except Exception as _e:
+                        logger.debug(
+                            "[silent-catch] _call_deepseek — "
+                            "loop_token_ledger.log_real_usage failed: %r", _e,
+                        )
+                    break
+                except Exception as e:
+                    retryable, status = _retryable(e)
+                    if not retryable or attempt > _MAX_RETRIES:
+                        raise
+                    delay = _retry_delay(attempt)
+                    logger.warning(
+                        "OpenRouter transient failure on %s (status=%s, attempt %d/%d) — "
+                        "retrying in %.2fs: %r",
+                        cand_model, status, attempt, _MAX_RETRIES + 1, delay, e,
+                    )
+                    await asyncio.sleep(delay)
             # Success — stop walking the fallback chain.
             if ci > 0:
                 logger.warning(

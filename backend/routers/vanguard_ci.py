@@ -74,6 +74,32 @@ def _verify_ci_auth(authorization: Optional[str]) -> None:
         raise HTTPException(401, "Invalid CI ingest token")
 
 
+def _as_dict(value) -> dict:
+    """Part X fix 10 — nested payload values are attacker-influenced
+    scanner output: a truthy non-dict (str/list/int) must coerce to
+    {} instead of crashing the next `.get()`."""
+    return value if isinstance(value, dict) else {}
+
+
+def _as_str(value) -> str:
+    """Part X fix 10 — a non-str field value (int/list/dict/bool)
+    must coerce to "" instead of crashing the next `.strip()` /
+    slice.  Strings pass through unchanged.  Strict (no str()
+    fallback): a non-str repo/commit is a 400 via the required-field
+    check below, not a stored repr like "123" or "['a']"."""
+    return value if isinstance(value, str) else ""
+
+
+def _to_int(value, default: int = 0) -> int:
+    """Part X fix 10 — safe int() for the `line` field: "abc" /
+    ["42"] / {"n": 1} become `default` instead of raising
+    ValueError/TypeError and 500ing the whole run."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _normalise_trufflehog(raw: list[dict]) -> list[dict]:
     """Trufflehog JSON-lines output uses nested keys we flatten so the
     UI can render uniformly alongside the in-process Vanguard rules.
@@ -86,12 +112,20 @@ def _normalise_trufflehog(raw: list[dict]) -> list[dict]:
         verified = bool(f.get("Verified") or f.get("verified"))
         detector = (f.get("DetectorName") or f.get("detector_name")
                     or f.get("detector") or "unknown")
-        src = f.get("SourceMetadata") or {}
-        data = src.get("Data") or src.get("data") or {}
-        fs = data.get("Filesystem") or data.get("filesystem") or {}
-        path = (fs.get("file") or f.get("file") or "").strip()
-        line = int(fs.get("line") or f.get("line") or 0)
-        raw_secret = (f.get("Raw") or f.get("raw") or "").strip()
+        # Part X fix 10 — the old code did `src.get(...)` on whatever
+        # SourceMetadata/Data/Filesystem held; a truthy non-dict
+        # there (or a non-str file/Raw, or a non-numeric line)
+        # raised AttributeError/ValueError/TypeError out of the
+        # handler and lost the WHOLE run (no try around the call).
+        # Coerce at the boundary; a bad nested value degrades to
+        # empty, never to a 500.
+        src = _as_dict(f.get("SourceMetadata"))
+        data = _as_dict(src.get("Data") or src.get("data"))
+        fs = _as_dict(data.get("Filesystem") or data.get("filesystem"))
+        path = _as_str(fs.get("file") or f.get("file") or "").strip()
+        line = _to_int(fs.get("line") if fs.get("line") is not None
+                       else f.get("line"), 0)
+        raw_secret = _as_str(f.get("Raw") or f.get("raw") or "").strip()
         # Redact: never persist the raw secret value past the first 4
         # chars + last 2 chars — enough to identify, not enough to
         # exploit if the Mongo collection ever leaks.
@@ -140,10 +174,17 @@ async def ingest_ci_findings(
     if db is None:
         raise HTTPException(503, "DB not connected")
 
-    repo    = (body.get("repo") or "").strip()
-    commit  = (body.get("commit") or "").strip()
-    branch  = (body.get("branch") or "").strip()
-    scanner = (body.get("scanner") or "").strip().lower()
+    # Part X fix 10 — same coercion as _normalise_trufflehog: a
+    # truthy non-str value for any of these fields (e.g. {"repo":
+    # 123} from a buggy/malicious workflow) used to raise
+    # AttributeError on .strip() / TypeError on slicing and 500 the
+    # whole run.  Non-str values coerce to "" — a bad repo/commit/
+    # scanner then fails the required-field 400 below, and a bad
+    # optional field is stored empty — never a 500.
+    repo    = _as_str(body.get("repo") or "").strip()
+    commit  = _as_str(body.get("commit") or "").strip()
+    branch  = _as_str(body.get("branch") or "").strip()
+    scanner = _as_str(body.get("scanner") or "").strip().lower()
     raw     = body.get("findings") or []
 
     if not (repo and commit and scanner):
@@ -164,8 +205,8 @@ async def ingest_ci_findings(
         "total_count":    len(normalised),
         "verified_count": verified_count,
         "findings":       normalised,
-        "run_url":        (body.get("run_url") or "")[:512],
-        "triggered_by":   (body.get("triggered_by") or "")[:128],
+        "run_url":        _as_str(body.get("run_url") or "")[:512],
+        "triggered_by":   _as_str(body.get("triggered_by") or "")[:128],
         "created_at":     datetime.now(timezone.utc).isoformat(),
     }
 

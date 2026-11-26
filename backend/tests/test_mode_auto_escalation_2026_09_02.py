@@ -12,8 +12,18 @@ from services.mode_routing import resolve_model_mode
 
 
 def test_t_code_edit_uses_reliable_model():
-    """A real code-edit (agentic tier) on Swift escalates to Pro."""
-    assert resolve_model_mode("agentic", "swift") == "pro"
+    """A real code-edit (agentic tier) on Swift escalates to Pro —
+    but ONLY when the account actually has Pro access (explicit flag).
+    2026-11-25 audit Part IX: the no-flag default is now FAIL-CLOSED,
+    so an omitted flag stays on Swift and the upgrade offer fires."""
+    assert resolve_model_mode("agentic", "swift",
+                              account_has_pro=True) == "pro"
+
+
+def test_no_flag_defaults_fail_closed():
+    """The old default silently escalated a free account to Pro.
+    The new default is fail-closed: no flag → no Pro."""
+    assert resolve_model_mode("agentic", "swift") == "swift"
 
 
 def test_quick_chat_stays_on_fast_cheap_swift():

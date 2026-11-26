@@ -22,6 +22,14 @@ Design rules:
     repo" beats exploratory "show me / preview"). Founder review:
     it's cheaper to accidentally offer a loop CTA than to lose an
     intended code change to a preview-only reply.
+  · EXCEPTION (Part XII a2): an explicit NEGATION ("don't commit",
+    "do not push") wins over the change-first tie-break. The old
+    code checked the change family first, so the negation pattern —
+    written specifically to catch "don't commit" — could never win:
+    any message matching it also matched the bare-verb change
+    pattern. Negation is now subtracted before the change family
+    is tested, so only a NON-negated change verb yields
+    CODE_CHANGE.
   · LLM output MUST be one of two exact label strings — anything
     else collapses to UNKNOWN so downstream code never sees garbage.
   · The regex list is high-precision on purpose; low-recall is fine
@@ -54,8 +62,18 @@ _PREVIEW_STRONG_RE = [re.compile(p, re.I) for p in [
     r"\b(?:can|could)\s+you\s+(?:show|preview|mock|sketch|draft)\b",
     r"\bpreview\s+only\b",
     r"\bjust\s+(?:the|a|an)\s+(?:html|jsx|tsx|component|snippet|example|sample|mock(?:up)?)\b",
-    r"\b(?:no|don't|dont|do\s+not)\s+(?:commit|push|deploy|ship|change|modify|edit)\b",
+    r"\b(?:no|don['’]t|dont|do\s+not)\s+(?:commit|push|deploy|ship|change|modify|edit)\b",
 ]]
+
+# Part XII (a2) — the negation pattern above, as a standalone regex
+# (incl. the curly-apostrophe `don’t` variant) so
+# `classify_intent_regex` can subtract negated verbs from the change
+# family before testing it.
+_NEGATION_RE = re.compile(
+    r"\b(?:no|don['’]t|dont|do\s+not)\s+"
+    r"(commit|push|deploy|ship|change|modify|edit)\b",
+    re.I,
+)
 
 _CODE_CHANGE_STRONG_RE = [re.compile(p, re.I) for p in [
     r"\b(?:commit|push|merge|deploy|ship|open\s+a\s+pr|open\s+a\s+pull\s+request)\b",
@@ -74,12 +92,20 @@ _CODE_CHANGE_STRONG_RE = [re.compile(p, re.I) for p in [
 def classify_intent_regex(text: str) -> tuple[str, list[str]]:
     """Layer 1 pre-filter.
 
-    Returns (intent, matched_pattern_names_or_snippets).  When both
-    families match, CODE_CHANGE wins (see module docstring).
+    Returns (intent, matched_pattern_names_or_snippets). When both
+    families match, CODE_CHANGE wins (see module docstring) — EXCEPT
+    when the change match rests solely on a verb the user explicitly
+    negated ("don't commit"): negation wins, and the result is
+    PREVIEW_ONLY. A non-negated change verb alongside the negation
+    ("don't commit, but do deploy it") still yields CODE_CHANGE.
     """
     if not text or not text.strip():
         return INTENT_UNKNOWN, []
-    matches_change  = [r.pattern for r in _CODE_CHANGE_STRONG_RE if r.search(text)]
+    # Subtract negated verbs first: remove each "don't <verb>" span
+    # from the text the change family is tested against, so a negated
+    # verb can never be the change family's only evidence.
+    text_for_change = _NEGATION_RE.sub("", text)
+    matches_change  = [r.pattern for r in _CODE_CHANGE_STRONG_RE if r.search(text_for_change)]
     matches_preview = [r.pattern for r in _PREVIEW_STRONG_RE     if r.search(text)]
     if matches_change:
         return INTENT_CODE_CHANGE, matches_change

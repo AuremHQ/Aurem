@@ -400,6 +400,26 @@ async def start_bulk_fix(body: dict,
         await fjm.close(db, job_id, ok=False, status="failed",
                         message="Insufficient tokens — no findings were attempted.")
         raise
+    except Exception as e:
+        # Part X fix 2 — assert_wallet's own contract ("either a real
+        # hold or a clean HTTPException(402)") is not airtight: a DB
+        # error mid-loop raises a non-HTTPException, and without this
+        # branch the holds already taken leaked and the job stayed
+        # "running" forever.  Release + close exactly as above, then
+        # fail closed with a structured 503 (job_id included so the
+        # client can poll the failed job / offer Restart) instead of
+        # an unhandled 500 with no job reference.
+        logger.warning("bulk-fix wallet hold failed job=%s err=%r", job_id, e)
+        for run_id in held_run_ids:
+            await finalize_hold(db, user_id=user_id, action="fix", run_id=run_id,
+                                ok=False, reason="bulk_hold_aborted")
+        await fjm.close(db, job_id, ok=False, status="failed",
+                        message="Wallet hold failed — no findings were attempted.")
+        raise HTTPException(503, {
+            "error": "wallet_hold_failed", "retryable": True,
+            "job_id": job_id,
+            "message": "Could not place the wallet hold — no charge, no work started. Try again shortly.",
+        }) from e
 
     # Launch the worker — runs in the background, streams events.
     # `user=effective` — apply_finding_fix() reads the GitHub App
@@ -455,27 +475,35 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
     proof_attempted = False
     before_shots: dict[str, bytes | None] = {"desktop": None, "mobile": None}
     before_fail: dict[str, str | None] = {"desktop": None, "mobile": None}
-    proj_doc = await db.cto_projects.find_one({"project_id": project_id}, {"_id": 0, "preview_url": 1})
-    preview_url = (proj_doc or {}).get("preview_url")
-    if preview_url:
-        proof_attempted = True
-        import services.deploy_verify as dv
-        for _device, _vp in (("desktop", "desktop"), ("mobile", "mobile_375")):
-            try:
-                _res = await dv.capture_single_screenshot(
-                    preview_url, db=db, user_id=user_id, project_id=project_id,
-                    viewport=_vp)
-                if _res.get("ok"):
-                    before_shots[_device] = _res["screenshot"]
-                else:
-                    before_fail[_device] = _res.get("fail_reason") or "unknown"
-                    logger.info("[fix-proof] before-capture (%s) not ok for job=%s: %s",
-                                _device, job_id, before_fail[_device])
-            except Exception as e:
-                before_fail[_device] = f"capture_crashed:{type(e).__name__}"
-                logger.warning("[fix-proof] before-capture (%s) crashed for job=%s: %r",
-                               _device, job_id, e)
+    # Part X fix 3 — this whole preamble (project lookup + before-
+    # capture) lives INSIDE the worker's top-level try: below, so a
+    # failure here hits the hold-release / job-error / fjm.close /
+    # ship_failed path like every other worker crash.  It used to sit
+    # above the try:, so a Mongo glitch on the find_one killed the
+    # asyncio task silently and left the job "running" forever with
+    # its wallet holds leaked — contradicting this function's own
+    # docstring ("top-level try/except wrapper").
     try:
+        proj_doc = await db.cto_projects.find_one({"project_id": project_id}, {"_id": 0, "preview_url": 1})
+        preview_url = (proj_doc or {}).get("preview_url")
+        if preview_url:
+            proof_attempted = True
+            import services.deploy_verify as dv
+            for _device, _vp in (("desktop", "desktop"), ("mobile", "mobile_375")):
+                try:
+                    _res = await dv.capture_single_screenshot(
+                        preview_url, db=db, user_id=user_id, project_id=project_id,
+                        viewport=_vp)
+                    if _res.get("ok"):
+                        before_shots[_device] = _res["screenshot"]
+                    else:
+                        before_fail[_device] = _res.get("fail_reason") or "unknown"
+                        logger.info("[fix-proof] before-capture (%s) not ok for job=%s: %s",
+                                    _device, job_id, before_fail[_device])
+                except Exception as e:
+                    before_fail[_device] = f"capture_crashed:{type(e).__name__}"
+                    logger.warning("[fix-proof] before-capture (%s) crashed for job=%s: %r",
+                                   _device, job_id, e)
         ordered = _interleave_by_severity(findings)
         batches = [ordered[i : i + _BULK_BATCH_SIZE]
                    for i in range(0, len(ordered), _BULK_BATCH_SIZE)]
@@ -809,7 +837,11 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                          fix_index=global_idx,
                          fix_total=len(ordered))
                 verified = await _verify_commit_exists(
-                    db=db, user=user, project_id=project_id,
+                    # `user` here IS the _gate effective dict — the
+                    # worker is launched with user=effective (see
+                    # start_bulk_fix), so this is the shared account
+                    # id, not the individual member's.
+                    db=db, effective=user, project_id=project_id,
                     full_sha=res.get("full_sha"),
                 )
                 # 2026-10 — Guardian re-scan: run the full category
@@ -902,16 +934,35 @@ async def _run_bulk_job(*, job_id: str, db, user: dict, project_id: str,
                 # Iter 212m-193 — persist the fixed state so a rescan
                 # doesn't resurrect this finding (fix lives on a draft
                 # PR branch; base branch is unchanged until merge).
+                # Part X fix 4 — a failed ledger write used to be
+                # swallowed with a bare `except Exception: pass`, so
+                # the fix looked done and then "un-fixed itself" on
+                # the next rescan.  record_fixed now logs + returns
+                # False on failure; surface that on the job (the fix
+                # itself stays ok=True with its commit — a ledger
+                # error must never fail a fix that already landed).
                 try:
-                    await record_fixed(
+                    _ledger_ok = await record_fixed(
                         db, user_id=user_id, project_id=project_id,
                         finding=finding,
                         commit_sha=res.get("commit_sha") or "",
                         html_url=res.get("html_url") or "",
                         tool=tool,
                     )
-                except Exception:
-                    pass
+                except Exception as _le:                     # noqa: BLE001
+                    # finding_key() can raise before record_fixed's
+                    # own try: — same handling as a False return.
+                    logger.warning("record_fixed raised job=%s finding=%s err=%r",
+                                   job_id, finding_id, _le)
+                    _ledger_ok = False
+                if not _ledger_ok:
+                    logger.warning(
+                        "record_fixed failed job=%s finding=%s — fix is "
+                        "live on GitHub but the ledger row is missing; "
+                        "a rescan may resurrect this finding",
+                        job_id, finding_id)
+                    await fjm.note_ledger_failure(
+                        db, job_id, finding_id, "record_fixed failed")
                 # Iter 212m-190 — deduct exactly 1 task PER successful
                 # fix (atomic $inc). Failed fixes above never reach
                 # this line, so a 12-selected / 2-failed run deducts 10.
@@ -1174,12 +1225,21 @@ def _guardian_rescan(category: str, path: str, patched_content: str) -> dict | N
 
 
 
-async def _verify_commit_exists(*, db, user: dict, project_id: str,
+async def _verify_commit_exists(*, db, effective: dict, project_id: str,
                                 full_sha: str | None) -> bool | None:
     """Hit GET /repos/{owner}/{repo}/commits/{sha} to confirm the
     commit landed on GitHub.  No `True` shortcut without a real
     HTTP 200 + non-empty parents list — the user explicitly asked
     for proof, not optimism.
+
+    Part X fix 11 (latent-only rename, no behaviour change) — the
+    parameter used to be named `user`, which invited a future caller
+    to pass the RAW caller dict from `_gate` (the individual team
+    member).  The project row is keyed by the SHARED account id, so
+    this MUST be the `_gate` effective dict (`effective_user`, whose
+    `user_id` is the effective account id) — both live call sites
+    already pass it; the rename + this comment make the contract
+    impossible to misread.
 
     2026-08-23 — returns `None` (not `False`) when the CHECK ITSELF
     is inconclusive (network error, rate limit, timeout) rather than
@@ -1191,7 +1251,7 @@ async def _verify_commit_exists(*, db, user: dict, project_id: str,
         return False
     try:
         proj = await db.cto_projects.find_one(
-            {"project_id": project_id, "user_id": user["user_id"]},
+            {"project_id": project_id, "user_id": effective["user_id"]},
             {"_id": 0, "github_owner": 1, "github_repo": 1, "github_token": 1,
              "auth_method": 1, "installation_id": 1, "user_id": 1},
         )
@@ -1392,7 +1452,7 @@ async def retry_verify_commit(job_id: str, finding_id: str,
     if not row:
         raise HTTPException(404, "Finding not found in this job")
     verified = await _verify_commit_exists(
-        db=db, user=effective, project_id=project_id, full_sha=row.get("full_sha"),
+        db=db, effective=effective, project_id=project_id, full_sha=row.get("full_sha"),
     )
     await fjm.update_result_verified(db, job_id, finding_id, verified)
     return {"ok": True, "finding_id": finding_id, "verified": verified}

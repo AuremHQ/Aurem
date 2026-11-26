@@ -28,6 +28,16 @@
       <div id="login-error" class="error hidden" data-testid="cb-login-error"></div>
     </section>
 
+    <section id="mfa-view" class="view hidden">
+      <p class="muted">Your account has 2FA enabled. Enter the 6-digit code from your authenticator app.</p>
+      <label for="mfa-code-input">2FA code</label>
+      <input id="mfa-code-input" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" data-testid="cb-mfa-code-input" />
+      <button id="mfa-verify-btn" data-testid="cb-mfa-verify-btn">Verify</button>
+      <button id="mfa-backup-toggle" class="link-btn" data-testid="cb-mfa-backup-toggle">Use a backup code instead</button>
+      <button id="mfa-cancel-btn" class="link-btn" data-testid="cb-mfa-cancel-btn">Back to sign in</button>
+      <div id="mfa-error" class="error hidden" data-testid="cb-mfa-error"></div>
+    </section>
+
     <section id="main-view" class="view hidden">
       <div class="row">
         <span id="account-email" class="muted"></span>

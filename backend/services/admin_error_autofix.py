@@ -105,7 +105,11 @@ async def run_error_autofix(db, *, admin_user_id, jwt_token: str,
             is_founder=True,
             force_read_only=True,
         )
-        ok = bool(result and result.get("ok"))
+        # Part X fix 9 — `result` can be a truthy non-dict (a string
+        # return is a known historical shape of chat_with_tools);
+        # `.get` on it raised AttributeError.  Guard exactly like
+        # the `content` read two lines below already does.
+        ok = bool(isinstance(result, dict) and result.get("ok"))
         await db.frontend_errors.update_one(
             {"_id": oid},
             {"$set": {
@@ -148,7 +152,10 @@ async def apply_error_autofix(db, *, admin_user_id, jwt_token: str,
             mode="maxx",
             is_founder=True,
         )
-        ok = bool(result and result.get("ok"))
+        # Part X fix 9 — same isinstance guard as the PROPOSE phase
+        # above: a truthy non-dict `result` must mark the run failed,
+        # not crash on `.get`.
+        ok = bool(isinstance(result, dict) and result.get("ok"))
         await db.frontend_errors.update_one(
             {"_id": oid},
             {"$set": {

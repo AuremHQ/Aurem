@@ -82,6 +82,15 @@ def _dispatch_scorers(prompt_spec: dict, response: dict) -> list[ScoreResult]:
             out.append(refusal_scorer(reply, **kwargs))
         elif name == "multistep":
             out.append(multistep_scorer(reply, **kwargs))
+        elif name == "scope":
+            # Part XII (d3-scope): the dispatcher never dispatched
+            # scope_scorer before — a prompt spec asking for "scope"
+            # fell into the `else` as "unknown scorer: scope" even
+            # though the scorer exists (and is imported above). The
+            # only live call was the hard-coded one in
+            # `_project_scoping_isolation_test`. Specs pass
+            # `intended_repo` / `visible_repo` as kwargs.
+            out.append(scope_scorer(**kwargs))
         else:
             out.append(ScoreResult(
                 scorer=name, status=PARTIAL, severity=SOFT,
@@ -290,6 +299,170 @@ async def _input_normalizer_golden_set_test() -> dict:
     }
 
 
+# ── Knowledge-docs approval gate (offline, Part VII fix 2) ───────────
+
+# Same candidate list as the L1 loader (services/knowledge_injector.py
+# _CANDIDATE_FILES). marketing-style.md is deliberately NOT here — the
+# loader excludes it by name, so this check does too.
+_KNOWLEDGE_CANDIDATE_FILES: tuple[str, ...] = (
+    "product.md",
+    "pricing.md",
+    "common-fixes.md",
+    "security-checks.md",
+)
+
+_KNOWLEDGE_STATUSES = ("draft", "approved")
+
+
+def _parse_knowledge_frontmatter(text: str) -> tuple[dict | None, str]:
+    """Parse a knowledge doc's front-matter EXACTLY the way the loader
+    does (services/knowledge_injector.py _parse_frontmatter): a leading
+    `---` block, yaml.safe_load. Returns (meta, reason): meta is None
+    when the front-matter is missing/malformed — which this check treats
+    as a FAIL, not a silent skip (the loader would silently treat it as
+    not-approved, so a broken gate would hide behind a quiet skip)."""
+    import re as _re
+
+    m = _re.match(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?", text, _re.DOTALL)
+    if not m:
+        return None, "missing front-matter block"
+    try:
+        import yaml
+        meta = yaml.safe_load(m.group(1))
+    except ImportError:
+        return None, "PyYAML unavailable — cannot verify knowledge approvals"
+    except Exception as e:
+        return None, f"front-matter is not valid YAML: {e}"
+    if not isinstance(meta, dict):
+        return None, "front-matter is not a mapping"
+    return meta, ""
+
+
+def _is_valid_approval_date(value) -> bool:
+    """approved_on must be a real calendar date: a YAML date/datetime
+    (yaml.safe_load already parses `2026-11-25` to datetime.date) or a
+    `YYYY-MM-DD` string. Anything else — blank, free text, an impossible
+    date like 2026-02-30 — is not evidence of approval."""
+    from datetime import date as _date, datetime as _datetime
+
+    if isinstance(value, _datetime):
+        return True
+    if isinstance(value, _date):
+        return True
+    if isinstance(value, str):
+        try:
+            _date.fromisoformat(value.strip())
+        except ValueError:
+            return False
+        return bool(value.strip())
+    return False
+
+
+def _check_knowledge_file(path: Path) -> ScoreResult:
+    """One file's approval state. Drafts pass (blank approval fields are
+    the correct current state); a file claiming `approved` must carry a
+    non-empty approver AND a valid approval date, because the loader
+    checks ONLY `status` and would inject an approved-but-unevidenced
+    doc immediately."""
+    name = path.name
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ScoreResult(
+            scorer="knowledge_approval", status=FAIL, severity=HARD,
+            evidence=f"{name}: file missing",
+            details={"file": name, "reason": "missing"},
+        )
+    except Exception as e:
+        return ScoreResult(
+            scorer="knowledge_approval", status=FAIL, severity=HARD,
+            evidence=f"{name}: unreadable: {e}",
+            details={"file": name, "reason": "unreadable"},
+        )
+    meta, reason = _parse_knowledge_frontmatter(text)
+    if meta is None:
+        return ScoreResult(
+            scorer="knowledge_approval", status=FAIL, severity=HARD,
+            evidence=f"{name}: {reason}",
+            details={"file": name, "reason": reason},
+        )
+    status = meta.get("status")
+    if status not in _KNOWLEDGE_STATUSES:
+        return ScoreResult(
+            scorer="knowledge_approval", status=FAIL, severity=HARD,
+            evidence=f"{name}: status {status!r} is not draft/approved",
+            details={"file": name, "status": status},
+        )
+    if status != "approved":
+        return ScoreResult(
+            scorer="knowledge_approval", status=PASS, severity=HARD,
+            evidence=f"{name}: status=draft (unapproved docs are never injected)",
+            details={"file": name, "status": status},
+        )
+    approved_by = meta.get("approved_by")
+    approved_on = meta.get("approved_on")
+    problems = []
+    if not isinstance(approved_by, str) or not approved_by.strip():
+        problems.append("approved_by is blank")
+    if not _is_valid_approval_date(approved_on):
+        problems.append(f"approved_on {approved_on!r} is blank or not a valid date")
+    if problems:
+        return ScoreResult(
+            scorer="knowledge_approval", status=FAIL, severity=HARD,
+            evidence=f"{name}: approved but {'; '.join(problems)}",
+            details={"file": name, "status": status,
+                     "approved_by": approved_by, "approved_on": approved_on},
+        )
+    return ScoreResult(
+        scorer="knowledge_approval", status=PASS, severity=HARD,
+        evidence=f"{name}: approved by {approved_by} on {approved_on}",
+        details={"file": name, "status": status,
+                 "approved_by": approved_by, "approved_on": approved_on},
+    )
+
+
+async def _knowledge_approval_test(
+    knowledge_dir: Path | None = None,
+) -> dict:
+    """2026-11-25 Part VII fix 2 — offline, no-LLM-cost approval gate
+    for the L1 knowledge docs. The loader (services/knowledge_injector)
+    injects any file whose front-matter says `status: approved` and
+    NEVER reads approved_by/approved_on, so a file flipped to approved
+    with blank approval fields would be injected immediately. This
+    check closes that gap: approved ⇒ non-empty approved_by AND a
+    valid approved_on, else HARD fail (deploy-blocking). Drafts pass.
+    Covers the 4 _CANDIDATE_FILES + knowledge/examples/*.md (same
+    status-only gate in load_approved_examples). Runs in --quick mode
+    and BEFORE the no-LLM-key early return in run(), so keyless CI
+    still enforces it. `knowledge_dir` is a test seam only; production
+    always uses backend/knowledge."""
+    base = Path(knowledge_dir) if knowledge_dir is not None else _BACKEND / "knowledge"
+    scorers: list[ScoreResult] = []
+    checked = 0
+    for filename in _KNOWLEDGE_CANDIDATE_FILES:
+        scorers.append(_check_knowledge_file(base / filename))
+        checked += 1
+    examples_dir = base / "examples"
+    try:
+        example_files = sorted(p for p in examples_dir.iterdir()
+                               if p.is_file() and p.name.endswith(".md"))
+    except Exception:
+        example_files = []
+    for path in example_files:
+        scorers.append(_check_knowledge_file(path))
+        checked += 1
+    hard_fails = sum(1 for s in scorers if s.is_hard_fail())
+    return {
+        "id":         "K1_knowledge_approval",
+        "category":   "knowledge_approval",
+        "prompt":     "(offline) approved knowledge docs carry approved_by + valid approved_on",
+        "scorers":    [s.as_dict() for s in scorers],
+        "hard_fails": hard_fails,
+        "soft_fails": 0,
+        "files_checked": checked,
+    }
+
+
 # ── Routing misclassification regression test (offline-ish) ───────────
 
 async def _routing_misclassification_test() -> dict:
@@ -380,6 +553,7 @@ async def run(quick: bool = False) -> dict:
         "project_scoping": None,
         "routing_regression": None,
         "input_normalizer": None,
+        "knowledge_approval": None,
     }
 
     # Bootstrap Mongo for script context — main.py's lifespan never runs
@@ -403,11 +577,50 @@ async def run(quick: bool = False) -> dict:
     except Exception as e:
         report["mongo_bootstrap_warning"] = f"{type(e).__name__}: {e}"
 
+    # Part VII fix 2 — knowledge approval gate. OFFLINE (file reads +
+    # YAML parse only, no LLM, no Mongo) and runs BEFORE the no-LLM-key
+    # early return below, so keyless CI still enforces it. This placement
+    # is load-bearing: the early return used to skip every offline test
+    # on keyless runners. The gate's verdict now decides the early
+    # return's ok value instead of the old unconditional True.
+    report["knowledge_approval"] = await _knowledge_approval_test()
+    _knowledge_blocked = bool(report["knowledge_approval"]["hard_fails"])
+
     has_llm_key = bool(os.getenv("EMERGENT_LLM_KEY")
                        or os.getenv("OPENROUTER_API_KEY"))
     if not has_llm_key:
+        # Part XII (d3-keys): a keyless run used to return
+        # `ok: True` having run NOTHING — including the offline tests
+        # that need no LLM at all — so a deploy with no API keys
+        # configured "passed" evals vacuously and `main()` exited 0.
+        # Now the offline tests still run (routing regression +
+        # normalizer golden set always; project-scoping isolation
+        # when not --quick, mirroring the full run), the LLM
+        # batteries are recorded as skipped — and the run FAILS.
+        # A keyless run can never gate a deploy green.
+        # (Merged with Part VII fix 2: the knowledge-approval gate
+        # above already ran; its verdict stays in
+        # report["knowledge_approval"]. ok=False here subsumes its
+        # `not _knowledge_blocked` — a keyless run is blocked either
+        # way.)
         report["skipped"] = "no LLM key configured (EMERGENT_LLM_KEY / OPENROUTER_API_KEY)"
-        report["ok"] = True
+        report["routing_regression"] = await _routing_misclassification_test()
+        report["input_normalizer"] = await _input_normalizer_golden_set_test()
+        if not quick:
+            report["project_scoping"] = await _project_scoping_isolation_test()
+        offline_scores: list[ScoreResult] = []
+        for section in ("routing_regression", "input_normalizer",
+                        "project_scoping"):
+            entry = report.get(section)
+            if entry:
+                for s in entry.get("scorers", []):
+                    offline_scores.append(ScoreResult(**s))
+        summary = aggregate(offline_scores)
+        summary["llm_calls_used"] = 0
+        summary["finished_at"] = datetime.now(timezone.utc).isoformat()
+        summary["blocked"] = True
+        report["summary"] = summary
+        report["ok"] = False
         return report
 
     # ── System 1: Quality ──────────────────────────────────────────
@@ -441,6 +654,9 @@ async def run(quick: bool = False) -> dict:
                 all_scores.append(ScoreResult(**s))
     if report.get("input_normalizer"):
         for s in report["input_normalizer"].get("scorers", []):
+            all_scores.append(ScoreResult(**s))
+    if report.get("knowledge_approval"):
+        for s in report["knowledge_approval"].get("scorers", []):
             all_scores.append(ScoreResult(**s))
     if report.get("project_scoping"):
         for s in report["project_scoping"].get("scorers", []):
@@ -482,6 +698,12 @@ async def run(quick: bool = False) -> dict:
 
 def _format_report(report: dict) -> str:
     s = report.get("summary") or {}
+    # Part VII fix 2 — on the keyless early-return path there is no
+    # summary, so the gate line must fall back to report["ok"]: before
+    # this fix the skipped path always had ok=True, so the display was
+    # never wrong; now a failing knowledge gate makes ok=False while
+    # the old code printed "✅ PASS" next to exit code 1.
+    blocked = s.get("blocked") if s else not report.get("ok", True)
     lines = [
         "═══════════════════════════════════════════════",
         "  AUREM EVAL-AS-CI — Final Report",
@@ -496,7 +718,7 @@ def _format_report(report: dict) -> str:
         f"  HARD fails:       {s.get('hard_fails', 0)}   ← deploy-blocking",
         f"  Partials:         {s.get('partials', 0)}",
         "",
-        f"  Deploy gate: {'❌ BLOCKED' if s.get('blocked') else '✅ PASS'}",
+        f"  Deploy gate: {'❌ BLOCKED' if blocked else '✅ PASS'}",
         "═══════════════════════════════════════════════",
     ]
     if report.get("skipped"):

@@ -294,11 +294,17 @@ def stats() -> dict:
 #
 #  This helper persists the last-known-good value into Mongo
 #  (`analytics_persistent_cache` collection, single doc per key).
-#  Reads ALWAYS return immediately if any doc exists — even when it
-#  is past the TTL.  When stale, a background refresh task is fired
-#  but the request itself never waits.  On the very first cold boot
-#  (no doc at all) we do block, but capped by `hard_timeout=4.0` s
-#  so the frontend never aborts.
+#  Reads return immediately if any doc exists.  Within the TTL the
+#  doc is fresh.  Past the TTL, a background refresh task is fired —
+#  BUT since Part XV the staleness is BOUNDED when the caller passes
+#  `max_stale_seconds` (see `_swr_staleness`): past TTL + grace the
+#  stale value is never served silently — the caller recomputes
+#  synchronously (capped by `hard_timeout`) or returns an explicit
+#  `{"_status": "stale", ...}` marker.  With `max_stale_seconds=None`
+#  (the default) the legacy behaviour is kept: stale is served
+#  indefinitely while the background refresh retries.  On the very
+#  first cold boot (no doc at all) we do block, but capped by
+#  `hard_timeout=4.0` s so the frontend never aborts.
 #
 #  Empirically this drops admin/insights/activation-funnel from
 #  ~6 s of 499s on cold cache to a <50 ms Mongo read on every load.
@@ -368,24 +374,56 @@ async def _swr_background_refresh(
         logger.warning("swr background refresh failed for %s: %r", key, e)
 
 
+def _swr_staleness(age: float, ttl_seconds: float,
+                   max_stale_seconds: Optional[float]) -> str:
+    """Classify a cached SWR doc by age (Part XV — pure, unit-tested).
+
+    "fresh"   — age within the TTL: serve as-is.
+    "swr"     — past TTL but within the bounded grace window
+                (TTL + max_stale_seconds): serve stale, refresh in
+                the background (classic stale-while-revalidate).
+    "expired" — past TTL + grace (or past TTL when
+                max_stale_seconds == 0): do NOT serve silently.
+
+    max_stale_seconds=None preserves the legacy behaviour: stale is
+    served indefinitely while the background refresh retries.
+    """
+    if age <= ttl_seconds:
+        return "fresh"
+    if max_stale_seconds is None:
+        return "swr"
+    if age <= ttl_seconds + max_stale_seconds:
+        return "swr"
+    return "expired"
+
+
 async def mongo_swr_cache(
     key: str,
     ttl_seconds: float,
     builder: Callable[[], Awaitable[Any]],
     *,
     hard_timeout: float = 4.0,
+    max_stale_seconds: Optional[float] = None,
 ) -> Any:
     """Stale-while-revalidate cache backed by a single Mongo document.
 
     Behaviour:
-      • If a stored doc exists → return it immediately.  If past TTL,
-        spawn a background refresh task.
+      • If a stored doc exists and is fresh (age <= TTL) → return it.
+      • If past TTL but within the grace window (age <= TTL +
+        max_stale_seconds, or unbounded when max_stale_seconds is
+        None) → return it immediately and spawn a background refresh.
+      • If past TTL + grace → NEVER serve the stale value silently:
+        recompute synchronously, capped by `hard_timeout`. On success
+        return the fresh value; on timeout/failure return an explicit
+        `{"_status": "stale", ...}` marker (same `_status` contract
+        as the warming skeleton) and refresh in the background.
       • If no doc exists at all → compute synchronously with
         `hard_timeout` (default 4 s).  On timeout, return a warming
         skeleton and spawn the compute as a background task.
       • The persisted doc lives in collection ``analytics_persistent_cache``.
 
-    Returns the cached value, the fresh value, or a warming skeleton.
+    Returns the cached value, the fresh value, or a warming/stale
+    skeleton.
     """
     # Late-bind the Mongo client so importing this module does not
     # require a live DB connection (matters for unit tests).
@@ -410,8 +448,38 @@ async def mongo_swr_cache(
     now_ts = time.time()
     if doc:
         age = now_ts - float(doc.get("computed_at") or 0)
-        if age > ttl_seconds:
-            # Stale — schedule background refresh, return stale value.
+        state = _swr_staleness(age, ttl_seconds, max_stale_seconds)
+        if state == "expired":
+            # Past TTL + grace — never serve the stale value silently.
+            # Recompute synchronously, capped by hard_timeout; on
+            # success return the fresh value, on timeout/failure
+            # return an explicit stale marker (same _status contract
+            # as the warming skeleton) and refresh in the background.
+            try:
+                return await asyncio.wait_for(
+                    _swr_compute_and_store(key, builder, coll),
+                    timeout=hard_timeout,
+                )
+            except Exception:
+                try:
+                    asyncio.get_running_loop().create_task(
+                        _swr_background_refresh(key, builder, coll),
+                    )
+                except RuntimeError:
+                    pass
+                return {
+                    "_status": "stale",
+                    "_message": (
+                        "Funnel data is stale (older than the "
+                        f"{ttl_seconds + (max_stale_seconds or 0):.0f}s freshness window) "
+                        "and the background refresh has not succeeded yet. "
+                        "Refresh in 30 seconds for live data."
+                    ),
+                    "_stale_age_seconds": round(age),
+                }
+        if state == "swr":
+            # Stale but within the grace window — schedule background
+            # refresh, return the stale value.
             try:
                 asyncio.get_running_loop().create_task(
                     _swr_background_refresh(key, builder, coll),

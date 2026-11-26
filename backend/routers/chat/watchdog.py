@@ -235,6 +235,15 @@ async def consume_worker_queue(state: StreamState, worker_t, ticker_t,
                     "turn_state": "partial" if partial_invocations else "error",
                     "continue_available": bool(partial_invocations),
                     "error": None if partial_invocations else "no progress before timeout",
+                    # P1 L7 — True when this timeout fired on the retry
+                    # attempt (stream.py already spent the single
+                    # zero-tool-call auto-retry and told the user).
+                    # The UI can then render this as terminal/paused
+                    # ("timed out again after one retry — Retry
+                    # manually") instead of a first-attempt timeout.
+                    # False on a first-attempt timeout (no retry spent).
+                    "timeout_retry_exhausted": bool(
+                        getattr(state, "timeout_retried", False)),
                     # INTERACTION_CONTRACT_V1 P1 — a fired 4-clock name
                     # (connect/first_token/stream_idle/hard_deadline) is
                     # strictly more specific than the legacy generic

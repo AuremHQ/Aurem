@@ -28,36 +28,74 @@ Scope: only removes sentences that are PURELY self-directed (no
 information content for the end user). The sibling GitHub-access-
 revoked error in local_tools.py deliberately embeds a real end-user
 message ("Tell the user clearly: 'GitHub access to X was revoked —
-reconnect...'") inside the same tool-result string — that quoted
-sentence is left untouched; only the two purely-internal sentences
-around it are stripped.
+reconnect...'") inside the same tool-result string.
+
+Part XII (d3) — DESIGN CONFLICT, recorded here deliberately: this
+docstring used to say that quoted sentence was "left untouched" on
+purpose, because its CONTENT is real end-user information. That is
+still true of the content — but the MODEL-DIRECTED FRAMING around
+it ("Tell the user clearly:", plus the leading "OAuth/PAT token
+expired." tool-error fragment) is not user content, and it was
+leaking verbatim into user-facing replies. The fix unwraps the
+framing and keeps the message: the prefix (and its surrounding
+quotes) are stripped, the revoked-access message itself survives.
+A cleaner long-term fix is to restructure
+`_github_access_revoked_error` in local_tools.py to carry a separate
+`user_message` field so this guard never has to parse model-directed
+prose at all — NOT done here (local_tools.py is out of this lane's
+scope); the unwrap below is the guard-side part.
 """
 from __future__ import annotations
 
 import re
 
-_INTERNAL_DIRECTIVE_PATTERNS = [
+_INTERNAL_DIRECTIVE_PATTERNS: list[tuple[re.Pattern, str]] = [
     # local_tools.py read_repo_file's 404 error — the whole model-only
     # instruction block, from "STOP guessing paths" through to the end
     # of that guidance sentence.
-    re.compile(
+    (re.compile(
         r"STOP guessing paths\.\s*Your next tool call MUST be.*?"
         r"(?:actual layout\.|training data\.)\s*",
         re.IGNORECASE | re.DOTALL,
-    ),
+    ), ""),
     # local_tools.py's GitHub-access-revoked error — only the two
-    # purely-internal sentences in that template; the "Tell the user
-    # clearly: '...'" sentence in the SAME string is real end-user
-    # content and is intentionally left untouched.
-    re.compile(
+    # purely-internal sentences in that template.
+    (re.compile(
         r"STOP calling repo tools — they will all fail the same way "
         r"until access is restored\.\s*",
         re.IGNORECASE,
-    ),
-    re.compile(
+    ), ""),
+    (re.compile(
         r"Do not guess at file paths or blame an unrelated API\.\s*",
         re.IGNORECASE,
-    ),
+    ), ""),
+    # Part XII (d3) — unwrap the model-directed framing around the
+    # revoked-access message. First pattern: the quoted form
+    # `Tell the user clearly: '...message...'` → just the message
+    # (prefix AND surrounding quotes removed, message kept via \1).
+    # The closing quote must follow sentence punctuation so a message
+    # containing an apostrophe ("Can't ...") can never be truncated
+    # mid-word — if that pattern doesn't match, the generic prefix
+    # strip below still removes "Tell the user clearly: " and leaves
+    # the quotes.
+    (re.compile(
+        r"Tell the user clearly:\s*'([^']*[.!?])'\s*",
+        re.IGNORECASE,
+    ), r"\1"),
+    # Generic fallback: strip the directive prefix whatever follows
+    # it (double-quoted, unquoted, or a message the first pattern
+    # could not unwrap safely).
+    (re.compile(
+        r"Tell the user clearly:\s*",
+        re.IGNORECASE,
+    ), ""),
+    # The leading tool-error fragment from the same template
+    # ("OAuth/PAT token expired. ...") — tool-result text, not
+    # user-facing content.
+    (re.compile(
+        r"OAuth/PAT token expired\.\s*",
+        re.IGNORECASE,
+    ), ""),
 ]
 
 
@@ -69,6 +107,6 @@ def strip_leaked_tool_directives(text: str) -> str:
     if not text:
         return text
     out = text
-    for pat in _INTERNAL_DIRECTIVE_PATTERNS:
-        out = pat.sub("", out)
+    for pat, replacement in _INTERNAL_DIRECTIVE_PATTERNS:
+        out = pat.sub(replacement, out)
     return out

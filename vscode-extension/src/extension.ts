@@ -7,6 +7,7 @@
  * as Cursor / Claude Desktop / Claude Code CLI.
  */
 import * as vscode from 'vscode';
+import * as path from 'path';
 
 const SECRET_KEY = 'aurem.apiKey';
 const MCP_PATH   = '/api/aurem-dev/mcp';
@@ -24,21 +25,63 @@ async function setApiKey(context: vscode.ExtensionContext, key: string | undefin
 }
 
 /**
- * Call an MCP tool via JSON-RPC 2.0.
- * Throws on transport / RPC errors so the caller can render a toast.
+ * Parse a `text/event-stream` body carrying JSON-RPC 2.0 messages
+ * (one `data: {...}` line per message, the MCP streamable-HTTP shape).
+ * Returns the `result` of the last message that carries one; an
+ * `error` message throws immediately. Skips `[DONE]` terminators and
+ * non-data lines (`event:`, `:comment`, blank). Exported for unit
+ * tests — pure function, no vscode dependency.
  */
-async function callMcpTool(
+export function parseMcpSsePayload(text: string): unknown {
+  let lastResult: unknown;
+  let sawResult = false;
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+    const data = trimmed.slice('data:'.length).trim();
+    if (!data || data === '[DONE]') continue;
+    let msg: { result?: unknown; error?: { message?: string } };
+    try {
+      msg = JSON.parse(data);
+    } catch {
+      throw new Error('MCP server returned an SSE event that is not valid JSON');
+    }
+    if (msg.error) throw new Error(msg.error.message || 'RPC error');
+    if ('result' in msg) {
+      lastResult = msg.result;
+      sawResult = true;
+    }
+  }
+  if (!sawResult) {
+    throw new Error('MCP server returned an SSE stream with no result');
+  }
+  return lastResult;
+}
+
+/**
+ * Call any JSON-RPC 2.0 method on the MCP server.
+ * Throws on transport / RPC errors so the caller can render a toast.
+ *
+ * Part VII fix 3(a): the request advertises
+ * `Accept: application/json, text/event-stream`, so the server may
+ * answer with an SSE stream — the old code unconditionally called
+ * `r.json()`, which throws SyntaxError on an SSE body and failed
+ * EVERY such call. Now: `text/event-stream` → parse `data:` lines
+ * (above); anything else → plain JSON, with an SSE fallback for a
+ * server that streams without labelling the content type.
+ */
+async function callMcpRpc(
   serverUrl: string,
   apiKey: string,
-  toolName: string,
-  args: Record<string, unknown>,
+  method: string,
+  params: Record<string, unknown>,
 ): Promise<unknown> {
   const url = `${serverUrl}${MCP_PATH}`;
   const body = {
     jsonrpc: '2.0',
     id: Date.now(),
-    method: 'tools/call',
-    params: { name: toolName, arguments: args },
+    method,
+    params,
   };
   const r = await fetch(url, {
     method: 'POST',
@@ -50,9 +93,34 @@ async function callMcpTool(
     body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  const json = await r.json() as { result?: unknown; error?: { message?: string } };
-  if (json.error) throw new Error(json.error.message || 'RPC error');
-  return json.result;
+  const contentType = r.headers.get('Content-Type') || '';
+  const text = await r.text();
+  if (contentType.includes('text/event-stream')) {
+    return parseMcpSsePayload(text);
+  }
+  try {
+    const json = JSON.parse(text) as { result?: unknown; error?: { message?: string } };
+    if (json.error) throw new Error(json.error.message || 'RPC error');
+    return json.result;
+  } catch (e) {
+    if (e instanceof Error && e.message === 'RPC error') throw e;
+    // Not JSON — a server streaming SSE without the content-type
+    // label. If this also fails, its error is the one reported.
+    return parseMcpSsePayload(text);
+  }
+}
+
+/**
+ * Call an MCP tool via JSON-RPC 2.0 (`tools/call`).
+ * Throws on transport / RPC errors so the caller can render a toast.
+ */
+async function callMcpTool(
+  serverUrl: string,
+  apiKey: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  return callMcpRpc(serverUrl, apiKey, 'tools/call', { name: toolName, arguments: args });
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -106,26 +174,23 @@ export function activate(context: vscode.ExtensionContext) {
       });
       if (!key) return;
 
-      // Verify the key by calling `initialize` on the MCP server.
+      // Verify the key with a REAL MCP handshake: `initialize` proves
+      // the key is accepted by the MCP server (transport + auth).
+      // Part VII fix 3(b): the old code called tools/call with an EMPTY
+      // tool name (guaranteed to fail) and then fell back to a bare GET
+      // that saved the key on ANY HTTP 200 without ever proving the
+      // key — both are removed. The key is saved ONLY when initialize
+      // succeeds; any failure aborts before setApiKey.
       try {
-        await callMcpTool(serverUrl(), key, /* dummy — replaced by direct RPC */ '', {});
-      } catch {
-        // The tool call will fail (empty name) — but the transport/auth check
-        // is what we care about.  Try again via the manifest endpoint.
-        try {
-          const r = await fetch(`${serverUrl()}${MCP_PATH}`, {
-            headers: { 'Authorization': `Bearer ${key}` },
-          });
-          if (!r.ok) {
-            vscode.window.showErrorMessage(
-              `AUREM: Key rejected (HTTP ${r.status}).`);
-            return;
-          }
-        } catch (e) {
-          vscode.window.showErrorMessage(
-            `AUREM: Could not verify key — ${e instanceof Error ? e.message : String(e)}`);
-          return;
-        }
+        await callMcpRpc(serverUrl(), key, 'initialize', {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'aurem-cto-vscode', version: '0.3.0' },
+        });
+      } catch (e) {
+        vscode.window.showErrorMessage(
+          `AUREM: Key rejected — ${e instanceof Error ? e.message : String(e)}`);
+        return;
       }
       await setApiKey(context, key);
       await refreshBar();
@@ -193,7 +258,21 @@ export function activate(context: vscode.ExtensionContext) {
             if (!pick) return;
 
             // 2) Ship the code via MCP ship_code
-            const message = `${desc}\n\nContext from VS Code (${file.split('/').pop()}):\n\`\`\`\n${code.slice(0, 3000)}\n\`\`\``;
+            // Part VII fix 3(c): path.win32.basename() — NOT plain
+            // basename(). The host path module only splits its own
+            // separator, so plain basename() on a POSIX host returns a
+            // Windows `C:\Users\…\file.ts` path whole (the leak:
+            // file.split('/').pop() had the same flaw). win32.basename
+            // splits on BOTH `\` and `/`, so the filename is reduced
+            // on every host. Selections over the cap are warned about,
+            // not silently cut.
+            const MAX_SHIP_CHARS = 3000;
+            const truncated = code.length > MAX_SHIP_CHARS;
+            if (truncated) {
+              vscode.window.showWarningMessage(
+                `AUREM: Selection is ${code.length} chars — only the first ${MAX_SHIP_CHARS} will be sent to ORA.`);
+            }
+            const message = `${desc}\n\nContext from VS Code (${path.win32.basename(file)}):\n\`\`\`\n${code.slice(0, MAX_SHIP_CHARS)}${truncated ? `\n… [truncated at ${MAX_SHIP_CHARS} chars]` : ''}\n\`\`\``;
             const result = await callMcpTool(serverUrl(), apiKey, 'ship_code', {
               project_id: pick.p.project_id,
               message,

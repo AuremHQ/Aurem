@@ -59,6 +59,11 @@ function opLabel(op) {
   if (op.op_type === "rollback") {
     if (op.state === "failed")    return "Rollback failed — revert didn't land";
     if (op.state === "completed") return "Rolled back ✓";
+    // Part XIII · 1 — backend "drift_detected" now maps to its own
+    // state (see routers/loop.py history mapping) instead of the
+    // "running" default, so a drift-blocked rollback stops looking
+    // in-flight.
+    if (op.state === "drift_blocked") return "Rollback blocked — branch moved";
     return "Rolling back…";
   }
   if (op.state === "failed")    return `${typeLabel} failed`;
@@ -491,14 +496,42 @@ function OperationHistoryInner({ projectId, activeLoopId, authToken }) {
 
   // Iter 362 · Bug B — invoked when the user clicks "Rollback"
   // inside the themed modal. Splits the previous single flow so
-  // the confirmation gate stays non-blocking.
-  const performRowRollback = useCallback(async () => {
+  // the confirmation gate stays non-blocking. Part XIII · 1 — the
+  // return value is now inspected: a drift response (HTTP 200,
+  // ok: false, rollback_status "drift_detected") must NOT open the
+  // progress stream (the backend attempted nothing and the stream
+  // closes with no event). Instead the modal reopens in its drift
+  // variant; confirming there resends with acknowledge_drift: true.
+  const performRowRollback = useCallback(async (acknowledgeDrift = false) => {
     const target = rbConfirm && rbConfirm.loopId;
     setRbConfirm(null);
     if (!target) return;
     setRbState({ loopId: target, phase: "submitting" });
     try {
-      await rollbackLoop(target);
+      // Part XIII · 1 — default call keeps the exact old signature
+      // rollbackLoop(target); the opts object is only passed when the
+      // user actually acknowledged drift.
+      const res = await (acknowledgeDrift
+        ? rollbackLoop(target, { acknowledgeDrift: true })
+        : rollbackLoop(target));
+      if (res && res.ok === false && res.rollback_status === "drift_detected") {
+        // eslint-disable-next-line no-console
+        console.debug("[op-history rollback] drift detected — awaiting user acknowledgement", res.drift);
+        setRbState({
+          loopId: target, phase: "failed",
+          error: res.detail || "Branch has moved since this fix was applied.",
+        });
+        setRbConfirm({
+          loopId: target,
+          drift: {
+            branch:   res.drift?.branch,
+            expected: res.drift?.expected,
+            current:  res.drift?.current,
+            detail:   res.detail,
+          },
+        });
+        return;
+      }
       // eslint-disable-next-line no-console
       console.debug("[op-history rollback] POST ok — opening progress stream", target);
       setRbState(null);
@@ -524,12 +557,16 @@ function OperationHistoryInner({ projectId, activeLoopId, authToken }) {
   // ship rows must NOT offer the rollback button.
   // R10 — only a completed/running rollback hides the ship row's button; a
   // FAILED rollback keeps it visible as "Retry" so the user can act.
+  // Part XIII · 1 — a drift-blocked rollback is retryable the same
+  // way: the backend attempted nothing, so the button stays visible.
   const rolledBackIds = useMemo(() => {
     const s = new Set();
     for (const o of (history || [])) {
-      if (o.op_type === "rollback" && o.state !== "failed") s.add(o.loop_id);
+      if (o.op_type === "rollback" && o.state !== "failed"
+          && o.state !== "drift_blocked") s.add(o.loop_id);
     }
-    if (currentOp && currentOp.op_type === "rollback" && currentOp.state !== "failed") s.add(currentOp.loop_id);
+    if (currentOp && currentOp.op_type === "rollback" && currentOp.state !== "failed"
+        && currentOp.state !== "drift_blocked") s.add(currentOp.loop_id);
     return s;
   }, [history, currentOp]);
   const failedRollbackIds = useMemo(() => {
@@ -618,13 +655,18 @@ function OperationHistoryInner({ projectId, activeLoopId, authToken }) {
         />
       )}
       {/* Iter 362 · Bug B — themed in-app rollback confirmation modal
-          replacing native window.confirm() for row rollbacks. */}
+          replacing native window.confirm() for row rollbacks.
+          Part XIII · 1 — drift variant: when the last attempt came
+          back drift_detected, the modal shows the drift detail and
+          its confirm resends with acknowledge_drift: true. */}
       <RollbackConfirmModal
         open={!!rbConfirm}
         shortLabel={rbConfirm && rbConfirm.loopId
           ? `shipped loop ${String(rbConfirm.loopId).slice(0, 8)}`
           : "shipped commit"}
-        onConfirm={performRowRollback}
+        drift={rbConfirm && rbConfirm.drift}
+        confirmLabel={rbConfirm && rbConfirm.drift ? "Roll back anyway" : undefined}
+        onConfirm={() => performRowRollback(!!(rbConfirm && rbConfirm.drift))}
         onCancel={() => setRbConfirm(null)}
       />
     </div>

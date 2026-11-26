@@ -181,7 +181,6 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
             yield {"type": "error", "error": "monthly_limit_reached", "detail": e.message}
             return
 
-    from openai import AsyncOpenAI
     # 2026-09-27 — P0-1(e)/P1-7 root cause: this was the one LLM call
     # site in the codebase with NO HTTP-Referer/X-Title headers and no
     # `user` field, confirmed by grep against every other call site
@@ -194,8 +193,15 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
         "HTTP-Referer": os.getenv("OPENROUTER_REFERER", "https://auremcto.com"),
         "X-Title": "AUREM - ORA Founder Chat",
     }
-    client = AsyncOpenAI(base_url=resolved["base_url"], api_key=resolved["api_key"],
-                          timeout=_TIMEOUT_S, default_headers=default_headers)
+    # P1/L3 — shared pooled AsyncOpenAI client (was: constructed
+    # fresh inside EVERY stream_chat call). Keyed by (base_url,
+    # api_key, timeout, headers) in services.llm._http; NEVER closed
+    # here — the pool lives for the process lifetime.
+    from services.llm._http import get_shared_openai_client
+    client = get_shared_openai_client(
+        base_url=resolved["base_url"], api_key=resolved["api_key"],
+        timeout=_TIMEOUT_S, default_headers=default_headers,
+    )
     extra_body: dict = {}
     if reasoning:
         extra_body[os.getenv("LLM_REASONING_PARAM", "enable_thinking")] = True

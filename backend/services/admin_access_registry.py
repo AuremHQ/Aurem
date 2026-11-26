@@ -232,6 +232,7 @@ ADMIN_ROUTE_REGISTRY: list[tuple[str, str, str, object]] = [
     ("GET", "/api/aurem-dev/admin/cache/stats", "system.services", VIEW),
     ("GET", "/api/aurem-dev/admin/cache/analytics-stats", "system.services", VIEW),
     ("POST", "/api/aurem-dev/admin/cache/analytics-invalidate", "system.services", WORK),
+    ("POST", "/api/aurem-dev/admin/cache/route-invalidate", "system.services", WORK),
     ("GET", "/api/aurem-dev/admin/observability/breakers", "system.services", VIEW),
     ("GET", "/api/aurem-dev/admin/observability/breakers/{dep}", "system.services", VIEW),
     ("GET", "/api/aurem-dev/admin/guardrails", "system.services", VIEW),
@@ -392,6 +393,18 @@ ADMIN_ROUTE_REGISTRY: list[tuple[str, str, str, object]] = [
     ("GET", "/api/aurem-dev/admin/product-analytics", "growth.insights", VIEW),
     ("GET", "/api/aurem-dev/admin/project-brain/{project_id}", "work.idea", VIEW),
     ("GET", "/api/aurem-dev/admin/project-brain/{project_id}/trigger-audit", "work.idea", VIEW),
+    # Part XV — INTENTIONAL owner-only, not a missing key (see also
+    # frontend/src/lib/adminNav.js, settings entry): the composite
+    # Settings page (Stripe keys, LLM models, GitHub App, video
+    # secrets, ORA hints) has screen_key None on purpose. The gate
+    # (cto_services/auth.py _finish_admin_check) 403s every team
+    # member when screen_key is None, even at VIEW level, so no
+    # override can ever grant this page. The granular sub-endpoints
+    # DO have keys (settings.paysetup / settings.models /
+    # settings.githubapp / settings.video / settings.hints /
+    # settings.plans above) — only the composite page-load is locked.
+    # Granting members this page is a founder policy decision, not a
+    # bug fix: it needs a new/existing key set here AND in adminNav.js.
     ("GET", "/api/aurem-dev/admin/settings", None, VIEW),
     ("POST", "/api/aurem-dev/admin/settings", None, OWNER_ONLY),
     ("GET", "/api/aurem-dev/admin/skills-usage", "ora.learning", VIEW),

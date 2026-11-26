@@ -36,11 +36,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import os
 import re
+import socket
 import time
+from datetime import datetime, timezone
 from enum import Enum
 from typing import AsyncIterator, Optional
 
@@ -62,7 +63,24 @@ from services.loop_engine_helpers import (
 from core.boundaries import coerce
 from core.errors import ContractError
 
+# P1H extraction (2026-11-25) — plan-phase LLM adapter moved verbatim
+# to services/loop_engine_plan.py; re-exported here so every existing
+# bare-name call site keeps resolving unchanged.
+from services.loop_engine_plan import (
+    PLAN_LLM_TIMEOUT_S,  # noqa: F401 — re-export (plan-phase LLM timeout)
+    _CostCapPaused, _generate_plan,
+)
+
 _PID = os.getpid()
+
+# P1g — durable job queue: worker identity stamped on every claimed
+# job record so a later worker can tell "running HERE" from "owner
+# dead". Best-effort hostname; the pid alone is enough on one host,
+# the hostname disambiguates across hosts sharing one Mongo.
+try:
+    _WORKER_ID = f"{socket.gethostname()}:{_PID}"
+except Exception:                                        # noqa: BLE001
+    _WORKER_ID = f"unknown:{_PID}"
 
 # 2026-08-27 — "Show the Outcome, Never the Engine" P0c. `_narrate()`'s
 # own design invariant #4 says live-feed text must be plain-language,
@@ -122,13 +140,8 @@ MAX_PHASE_RESTARTS = 1
 # with resume_reason="total_budget_exceeded" so the frontend + Guard
 # 19 stuck-detector can identify the class.
 LOOP_TOTAL_BUDGET_S = int(os.environ.get("LOOP_TOTAL_BUDGET_S", "1800"))
-# Iter 349 — Hard timeout on the plan-phase LLM call itself. The 120s
-# phase budget covers graph refresh + repo map + LLM, but a hung LLM
-# call was eating the whole budget and the user stared at
-# "Generating plan…" for 90+ s (PROD P0). 30s is generous for a
-# plan-only JSON response; on breach we fail FAST with a clear message
-# instead of silently burning the full phase budget.
-PLAN_LLM_TIMEOUT_S = int(os.environ.get("PLAN_LLM_TIMEOUT_S", "30"))
+# PLAN_LLM_TIMEOUT_S lives in services/loop_engine_plan.py (P1H
+# extraction) and is re-exported above; _generate_plan is its only user.
 # A session whose Mongo doc hasn't been updated in this long while in
 # EXECUTING/VERIFYING is treated as orphaned by resume_stale().
 # Iter 308 — MUST be strictly greater than any phase's own timeout,
@@ -146,6 +159,34 @@ assert STALE_AFTER_S > max(PHASE_TIMEOUTS_S.values()), (
     f"phase budget ({max(PHASE_TIMEOUTS_S.values())}s) — otherwise "
     "the resume_stale reaper can kill a legitimately-progressing "
     "phase (iter 308 root cause of the 2.5-hr stuck-execute bug)."
+)
+# P1g — durable job queue (Mongo `loop_sessions.job`, no new store).
+# The session doc already persists state, but carries no liveness:
+# a healthy pipeline refreshes `updated_at` every ≤6 s (the
+# `_with_budget` heartbeat `_emit`s), yet `resume_stale()` only
+# rescues docs stale for STALE_AFTER_S (480 s) — so after a worker
+# restart a mid-execution loop 404s for up to ~8 min, and a loop
+# that dies mid-plan is never rescued at all (PLANNING isn't in the
+# rescue set). The job record fixes both: `confirm()`/`start()`
+# claim it BEFORE the background task starts, the owner refreshes
+# `job.heartbeat_at` every JOB_HEARTBEAT_S, and a job whose
+# heartbeat is older than JOB_STALE_AFTER_S is provably ownerless.
+# 90 s = 3 missed 30 s beats (a live worker cannot miss 3 — the
+# heartbeat only awaits a sleep + one small update_one), and far
+# below STALE_AFTER_S, so the fast path can never fire on a live
+# worker while the 480 s legacy path still covers pre-upgrade docs
+# that have no job record at all.
+JOB_HEARTBEAT_S = int(os.environ.get("LOOP_JOB_HEARTBEAT_S", "30"))
+JOB_STALE_AFTER_S = int(os.environ.get("LOOP_JOB_STALE_AFTER_S", "90"))
+assert JOB_STALE_AFTER_S > JOB_HEARTBEAT_S * 2, (
+    f"JOB_STALE_AFTER_S ({JOB_STALE_AFTER_S}s) must exceed 2x "
+    f"JOB_HEARTBEAT_S ({JOB_HEARTBEAT_S}s) — otherwise one slow "
+    "heartbeat tick orphans a live worker."
+)
+assert JOB_STALE_AFTER_S < STALE_AFTER_S, (
+    f"JOB_STALE_AFTER_S ({JOB_STALE_AFTER_S}s) must be below "
+    f"STALE_AFTER_S ({STALE_AFTER_S}s) — otherwise the job-lease "
+    "fast path rescues nothing sooner than the legacy reaper."
 )
 # Iter 212m-172 — Awaiting-confirmation / paused-for-user auto-expiry.
 # A loop that sits in AWAITING_CONFIRMATION or PAUSED_FOR_USER for more
@@ -200,14 +241,164 @@ class LoopState(str, Enum):
     EXPIRED                = "expired"
 
 
-class _CostCapPaused(Exception):
-    """2026-08 hardening (F2) — raised when the G13 LLM cost cap blocks
-    a call mid-loop. Caught in start() and _do_execute() to PAUSE (not
-    fail) the loop — "blocked ≠ failed" (C4) applied to budget. Additive
-    only; does not change any other exception's handling."""
-    def __init__(self, message: str):
-        super().__init__(message)
-        self.message = message
+# _CostCapPaused lives in services/loop_engine_plan.py (P1H extraction)
+# and is re-exported above.
+
+
+# ─── P1g — durable job queue: orphan test + CAS reconcile ─────────
+# States in which a pipeline (or the plan phase) can be in flight.
+# IDLE is deliberately absent: start() stamps PLANNING before it
+# claims, so a durable doc never legitimately sits in IDLE.
+_JOB_RUNNING_STATES = frozenset({
+    LoopState.PLANNING.value,
+    LoopState.EXECUTING.value,
+    LoopState.VERIFYING.value,
+    LoopState.SCANNING.value,
+    LoopState.SHIPPING.value,
+    LoopState.SELF_HEALING.value,
+})
+
+
+def _coerce_utc(value) -> Optional[datetime]:
+    """Motor returns naive UTC datetimes; treat naive as UTC so
+    lease comparisons never raise TypeError (naive vs aware)."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+    return None
+
+
+def _job_is_orphaned(doc: dict, now: Optional[datetime] = None) -> bool:
+    """Pure predicate: is this session's owner provably dead?
+
+    * Job record present + status running: orphaned iff the owner's
+      heartbeat is older than JOB_STALE_AFTER_S (or missing — a
+      claim always writes one, so a missing heartbeat means the
+      claim never completed).
+    * Job already marked orphaned: still orphaned (re-reconcile is
+      idempotent).
+    * No job record (pre-upgrade doc): same bar `resume_stale()`
+      has always used — `updated_at` older than STALE_AFTER_S.
+    * Any other state: never orphaned (terminal/paused docs are
+      owned by nobody and need no rescue; refusing here is what
+      keeps a FAILED loop from being resurrected).
+    """
+    if not isinstance(doc, dict):
+        return False
+    if doc.get("state") not in _JOB_RUNNING_STATES:
+        return False
+    now = now or _now()
+    job = doc.get("job") or {}
+    if isinstance(job, dict):
+        if job.get("status") == "orphaned":
+            return True
+        if job.get("status") == "running":
+            hb = _coerce_utc(job.get("heartbeat_at"))
+            return hb is None or hb < now - _td(JOB_STALE_AFTER_S)
+    upd = _coerce_utc(doc.get("updated_at"))
+    return upd is not None and upd < now - _td(STALE_AFTER_S)
+
+
+def _job_final_status(state: LoopState) -> str:
+    """Job-record status for a pipeline that just stopped owning the
+    loop. Terminal states keep their name; a pause keeps the loop
+    retryable ("paused"); anything else means the task vanished
+    without a clean ending ("interrupted")."""
+    if state in _TERMINAL:
+        return state.value
+    if state in {LoopState.AWAITING_CONFIRMATION, LoopState.PAUSED_FOR_USER}:
+        return "paused"
+    return "interrupted"
+
+
+async def _reconcile_orphaned_job(db, doc: dict) -> Optional[dict]:
+    """Atomically reconcile one orphaned session. Returns the
+    reconciled doc, or None when the doc isn't orphaned (any more).
+
+    * Mid-pipeline orphan → PAUSED_FOR_USER with
+      resume_reason="worker_restart_mid_loop": the plan + context
+      are durable, so the user retries via the existing
+      pause-response path, which re-runs the pipeline from
+      EXECUTE (the established retry semantics — true mid-phase
+      resume is NOT attempted: phases aren't idempotent across
+      restarts, see MAX_PHASE_RESTARTS).
+    * Mid-plan orphan → FAILED with
+      resume_reason="worker_restart_mid_plan": no plan exists yet
+      (the plan-complete persist flips the state to
+      AWAITING_CONFIRMATION), so there is nothing to resume and
+      retrying would run EXECUTE with plan=None. The loop stays
+      visible (no 404), the lock is released, the user starts
+      fresh. The router's terminal guard turns a retry into a
+      409 `loop_terminal` instead of a misleading 404.
+
+    The staleness predicate is IN the update filter (CAS), so two
+    workers racing to reconcile — or a live owner heartbeating
+    late — cannot both win: a live owner has a fresh heartbeat
+    AND a fresh updated_at, so neither $or branch matches it.
+    """
+    if not isinstance(doc, dict):
+        return None
+    loop_id = doc.get("loop_id")
+    state = doc.get("state")
+    if not loop_id or state not in _JOB_RUNNING_STATES:
+        return None
+    now = _now()
+    if not _job_is_orphaned(doc, now):
+        return None
+    phase = doc.get("phase") or "?"
+    if state == LoopState.PLANNING.value:
+        target_state = LoopState.FAILED.value
+        resume_reason = "worker_restart_mid_plan"
+        message = ("Server restarted while drafting the plan; the "
+                   "run did not finish — start a fresh loop.")
+    else:
+        target_state = LoopState.PAUSED_FOR_USER.value
+        resume_reason = "worker_restart_mid_loop"
+        message = (f"Server restarted mid-{phase}; session paused — "
+                   "retry when ready.")
+    rescue_event = _new_event(
+        loop_id, LoopState(target_state), phase,
+        step=0, total_steps=5, message=message,
+        requires_user_action=True,
+        data={"sub_step": "rescued_stale", "rescued": True,
+              "resume_reason": resume_reason},
+    )
+    res = await db.loop_sessions.update_one(
+        {"loop_id": loop_id, "state": state,
+         "$or": [
+             {"job.heartbeat_at": {"$lt": now - _td(JOB_STALE_AFTER_S)}},
+             {"updated_at": {"$lt": now - _td(STALE_AFTER_S)}},
+         ]},
+        {"$set": {"state": target_state,
+                  "resume_reason": resume_reason,
+                  "updated_at": now,
+                  "last_event": rescue_event,
+                  "job.status": "orphaned"}},
+    )
+    if (getattr(res, "modified_count", 0) or 0) == 0:
+        return None
+    await _log_error(
+        db, loop_id, phase,
+        "Server restarted mid-loop; session paused."
+        if target_state == LoopState.PAUSED_FOR_USER.value
+        else "Server restarted mid-plan; loop failed.",
+    )
+    if target_state == LoopState.FAILED.value:
+        # No plan to retry: release the concurrent-loop lock so a
+        # fresh /loop/start on the same project succeeds at once
+        # (best-effort — the lock TTL clears it anyway).
+        try:
+            from services.loop_safety import release_loop_lock
+            await release_loop_lock(
+                db, doc.get("project_id") or "_no_project",
+                doc.get("user_id") or "", loop_id,
+            )
+        except Exception:                              # noqa: BLE001
+            pass
+    return await load_session(db, loop_id)
 
 
 # ─── Resume after crash (G3) ──────────────────────────────────────────
@@ -232,11 +423,43 @@ async def resume_stale(db) -> int:
       * requires_user_action = true (unlocks the retry CTA)
 
     Returns the count of sessions that were rescued.
+
+    P1g — fast path first: a session with a claimed job
+    (`loop_sessions.job.status == "running"`) whose owner's
+    heartbeat is older than JOB_STALE_AFTER_S is rescued on
+    this tick — including PLANNING, which the legacy path never
+    covered. A mid-plan orphan fails (no plan exists to resume);
+    a mid-pipeline orphan pauses for retry. The legacy
+    `updated_at` path below is unchanged for pre-upgrade docs
+    with no job record.
     """
-    cutoff = _now() - _td(STALE_AFTER_S)
+    # P1g — fast path: a claimed job whose owner missed 3 heartbeats
+    # is provably dead NOW (a live pipeline heartbeats every
+    # JOB_HEARTBEAT_S and _emits every ≤6 s). Rescue it on this
+    # tick instead of waiting out STALE_AFTER_S (480 s). Runs
+    # first: the legacy query below only matches running states,
+    # so a doc rescued here (now PAUSED/FAILED) can't be
+    # double-counted. This runs on the first housekeeping tick at
+    # startup (main.py `_loop_housekeeping`), so this IS the
+    # startup reconciliation for running jobs.
     rescued = 0
+    _job_cutoff = _now() - _td(JOB_STALE_AFTER_S)
     async for doc in db.loop_sessions.find({
-        "state": {"$in": [LoopState.EXECUTING.value,
+        "state": {"$in": [LoopState.PLANNING.value,
+                          LoopState.EXECUTING.value,
+                          LoopState.VERIFYING.value,
+                          LoopState.SCANNING.value,
+                          LoopState.SHIPPING.value,
+                          LoopState.SELF_HEALING.value]},
+        "job.status": "running",
+        "job.heartbeat_at": {"$lt": _job_cutoff},
+    }):
+        if await _reconcile_orphaned_job(db, doc) is not None:
+            rescued += 1
+    cutoff = _now() - _td(STALE_AFTER_S)
+    async for doc in db.loop_sessions.find({
+        "state": {"$in": [LoopState.PLANNING.value,
+                          LoopState.EXECUTING.value,
                           LoopState.VERIFYING.value,
                           LoopState.SCANNING.value,
                           LoopState.SHIPPING.value,
@@ -244,6 +467,13 @@ async def resume_stale(db) -> int:
         "updated_at": {"$lt": cutoff},
     }):
         loop_id = doc.get("loop_id")
+        if doc.get("state") == LoopState.PLANNING.value:
+            # P1g — a plan-less legacy orphan fails honestly (see
+            # _reconcile_orphaned_job); never pause a loop whose
+            # retry would run EXECUTE with plan=None.
+            if await _reconcile_orphaned_job(db, doc) is not None:
+                rescued += 1
+            continue
         frozen_phase = doc.get("phase") or "?"
         rescue_event = _new_event(
             loop_id,
@@ -371,12 +601,20 @@ class LoopEngine:
     def __init__(self, db, loop_id: str, user_id: str,
                  project_id: Optional[str], user_message: str,
                  bin_ctx=None, session_id: Optional[str] = None,
-                 source_findings: Optional[list] = None):
+                 source_findings: Optional[list] = None,
+                 mode: Optional[str] = None):
         self.db = db
         self.loop_id = loop_id
         self.user_id = user_id
         self.project_id = project_id
         self.user_message = user_message
+        # Part XIII · 2(a) — review mode threaded from /loop/start
+        # (swift / pro / maxx, same vocabulary as /chat/stream).
+        # None = full Council, exactly as before this change — no new
+        # engine behaviour is invented here; the mode is accepted,
+        # stored, persisted (see _doc) and restored on rehydrate so
+        # single-model routing can read it.
+        self.mode = (mode or "").strip().lower() or None
         # 2026-08-27 · P2 — Plan↔Scan Consistency Contract. When this
         # loop was started by resolving a confirmatory reply ("yes")
         # against a prior scan's findings (see services/
@@ -436,6 +674,14 @@ class LoopEngine:
         # AND `cancel()` actually cancels it instead of just setting
         # a flag the inner phases check between LLM calls.
         self._pipeline_task: Optional[asyncio.Task] = None
+        # P1g — durable job record (Mongo `loop_sessions.job`).
+        # `_job` mirrors the persisted job subdocument: claimed
+        # BEFORE a background task starts, refreshed by the
+        # heartbeat while it runs, released to its final status
+        # when the task ends. Empty until claimed; `_doc()` omits
+        # the key while empty so unclaimed engines change nothing.
+        self._job: dict = {}
+        self._job_heartbeat_task: Optional[asyncio.Task] = None
         # Last event timestamp — used by the silence watchdog to
         # detect a phase coroutine that is technically "running" but
         # not emitting any progress.
@@ -455,41 +701,58 @@ class LoopEngine:
         """Run PLAN → wait for confirmation event → continue.  This is
         an async generator so the router can stream events directly to
         the client."""
-        await self._emit(LoopState.PLANNING, "plan",
-                         message="Reading the request and drafting a plan…")
+        # P1g — claim the durable job record BEFORE any background
+        # work, so the loop is visible in Mongo from the first
+        # persist even if this worker dies mid-plan. State is
+        # stamped PLANNING first: a durable doc must never sit in
+        # IDLE (the reconciler only rescues in-flight states).
+        self.state = LoopState.PLANNING
+        self.phase = "plan"
+        await self._claim_job("plan")
         try:
-            # Iter 309 · Pre-Phase-1 (bug_verify_312 fix) — the plan
-            # phase is loop-originated too, so its LLM call must
-            # write a `loop.plan` row to `ora_chat_usage`.  Wrap in
-            # the same contextvars scope `_with_budget` uses for
-            # execute/verify/scan/ship — no other semantics change.
-            from services.loop_token_ledger import loop_call_context
-            async with loop_call_context(
-                loop_id=self.loop_id, phase_tag="plan",
-                user_id=self.user_id,
-            ):
-                await asyncio.wait_for(
-                    self._do_plan(),
-                    timeout=PHASE_TIMEOUTS_S["plan"],
-                )
-        except asyncio.TimeoutError:
-            await self._record_timeout_stat()
-            await self._fail(
-                "plan",
-                f"Plan generation exceeded the {PHASE_TIMEOUTS_S['plan']}s "
-                "budget and was stopped. Try again — or rephrase with a "
-                "shorter, more specific request.",
-            )
-        except _CostCapPaused as e:
-            # 2026-08 hardening (F2) — additive: budget PAUSE, not FAILED.
-            await self._pause_for_cost_cap("plan", e.message)
-        except Exception as e:                          # noqa: BLE001
-            # Iter 349 — RuntimeError carries a user-facing message
-            # (e.g. the 30s plan-LLM timeout); show it clean, not repr.
-            _msg = str(e) if isinstance(e, RuntimeError) else f"{e!r}"
-            if "timed out" in _msg:
+            await self._emit(LoopState.PLANNING, "plan",
+                             message="Reading the request and drafting a plan…")
+            try:
+                # Iter 309 · Pre-Phase-1 (bug_verify_312 fix) — the plan
+                # phase is loop-originated too, so its LLM call must
+                # write a `loop.plan` row to `ora_chat_usage`.  Wrap in
+                # the same contextvars scope `_with_budget` uses for
+                # execute/verify/scan/ship — no other semantics change.
+                from services.loop_token_ledger import loop_call_context
+                async with loop_call_context(
+                    loop_id=self.loop_id, phase_tag="plan",
+                    user_id=self.user_id,
+                ):
+                    await asyncio.wait_for(
+                        self._do_plan(),
+                        timeout=PHASE_TIMEOUTS_S["plan"],
+                    )
+            except asyncio.TimeoutError:
                 await self._record_timeout_stat()
-            await self._fail("plan", f"Plan generation failed: {_msg}")
+                await self._fail(
+                    "plan",
+                    f"Plan generation exceeded the {PHASE_TIMEOUTS_S['plan']}s "
+                    "budget and was stopped. Try again — or rephrase with a "
+                    "shorter, more specific request.",
+                )
+            except _CostCapPaused as e:
+                # 2026-08 hardening (F2) — additive: budget PAUSE, not FAILED.
+                await self._pause_for_cost_cap("plan", e.message)
+            except Exception as e:                          # noqa: BLE001
+                # Iter 349 — RuntimeError carries a user-facing message
+                # (e.g. the 30s plan-LLM timeout); show it clean, not repr.
+                _msg = str(e) if isinstance(e, RuntimeError) else f"{e!r}"
+                if "timed out" in _msg:
+                    await self._record_timeout_stat()
+                await self._fail("plan", f"Plan generation failed: {_msg}")
+        finally:
+            # Plan work is done (awaiting confirmation, failed, or
+            # paused) — or start() itself blew up. Either way the
+            # lease ends here: stop the heartbeat and mark the job
+            # record (terminal → its state, awaiting → "paused").
+            # Without this, a start() crash would leak a heartbeat
+            # task that keeps refreshing a dead loop's lease.
+            await self._release_job()
         # The plan phase ends in AWAITING_CONFIRMATION; the router waits
         # for the user to POST /confirm.  Yield buffered events here.
         while not self.queue.empty():
@@ -808,6 +1071,11 @@ class LoopEngine:
         # docs explicitly warn against ("the event loop only keeps
         # weak refs to tasks"). Add a done-callback to also clear
         # the ref on completion so we don't leak a Task per loop.
+        # P1g — claim the durable job record BEFORE the pipeline
+        # task starts. If the persist fails, confirm() raises and
+        # NO task is created: a pipeline without a durable record
+        # is exactly the orphan this fix removes.
+        await self._claim_job("pipeline")
         task = asyncio.create_task(self._run_pipeline())
         self._pipeline_task = task
 
@@ -882,6 +1150,104 @@ class LoopEngine:
             # event, so nothing more to do here.
             logger.info("[loop %s] pipeline task cancelled cleanly", self.loop_id)
             raise
+        finally:
+            # P1g — the pipeline task is done (completed / failed /
+            # cancelled): stop the job heartbeat and mark the job
+            # record with the engine's final state. Runs even when
+            # the task was cancelled — cancel() already persisted
+            # ABORTED, so the record lands as "aborted".
+            await self._release_job()
+
+    # ── P1g — durable job queue ──────────────────────────────────────
+    async def _claim_job(self, phase: str) -> None:
+        """Persist the durable job record BEFORE the background task
+        starts, then start the lease heartbeat.
+
+        The record lives on the session doc (`loop_sessions.job` —
+        no new collection): status "running", this worker's id,
+        claim + heartbeat timestamps, and the phase being run.
+        A worker restart leaves exactly this record behind, which
+        is what lets another worker tell a dead owner from a live
+        one. Raises if the persist fails — the caller must NOT
+        start the task then (confirm() propagates the raise before
+        create_task; start() fails before any plan work).
+        """
+        now = _now()
+        self._job = {
+            "status":       "running",
+            "worker_id":    _WORKER_ID,
+            "claimed_at":   now,
+            "heartbeat_at": now,
+            "phase":        phase,
+        }
+        try:
+            await _persist_session(self.db, self._doc())
+        except Exception:
+            self._job = {}
+            raise
+        self._job_heartbeat_task = asyncio.create_task(
+            self._job_heartbeat_loop(),
+        )
+
+    async def _job_heartbeat_loop(self) -> None:
+        """Refresh `job.heartbeat_at` every JOB_HEARTBEAT_S while a
+        claimed task is in flight. Stops itself the moment the
+        lease is lost (tick returns False) so a reconciled-away
+        loop is never kept "alive" by a stale owner."""
+        try:
+            while True:
+                await asyncio.sleep(JOB_HEARTBEAT_S)
+                if not await self._job_heartbeat_tick():
+                    return
+        except asyncio.CancelledError:
+            raise
+
+    async def _job_heartbeat_tick(self) -> bool:
+        """One lease refresh. Returns False when this worker no
+        longer owns the job (doc gone, job no longer "running", or
+        claimed by another worker) — the caller then stops ticking.
+        DB errors return True (keep trying; a transient outage
+        must not kill the pipeline, and the 90 s lease tolerates
+        a few missed beats)."""
+        try:
+            now = _now()
+            res = await self.db.loop_sessions.update_one(
+                {"loop_id": self.loop_id,
+                 "job.status": "running",
+                 "job.worker_id": _WORKER_ID},
+                {"$set": {"job.heartbeat_at": now,
+                          "updated_at": now}},
+            )
+            if (getattr(res, "modified_count", 0) or 0) == 0:
+                return False
+            self._job["heartbeat_at"] = now
+            return True
+        except Exception as _e:                               # noqa: BLE001
+            logger.debug("[loop %s] job heartbeat tick failed: %r",
+                         self.loop_id, _e)
+            return True
+
+    async def _release_job(self) -> None:
+        """End the lease: stop the heartbeat task, mark the job
+        record with the engine's final state, persist once.
+        Best-effort throughout — releasing must never raise into
+        a pipeline finally block. No-op when nothing was claimed."""
+        task = self._job_heartbeat_task
+        self._job_heartbeat_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):      # noqa: BLE001
+                pass
+        if not self._job:
+            return
+        self._job["status"] = _job_final_status(self.state)
+        try:
+            await _persist_session(self.db, self._doc())
+        except Exception as _e:                               # noqa: BLE001
+            logger.debug("[loop %s] job release persist failed: %r",
+                         self.loop_id, _e)
 
     async def _run_pipeline_inner(self) -> None:
         """The original phase pipeline — extracted so `_run_pipeline`
@@ -1402,7 +1768,7 @@ class LoopEngine:
                 )
                 plan_title = plan.get("title", "")
 
-                async def _gen_via_parliament(path):
+                async def _gen_via_parliament(path, attempt: int = 1):
                     async with sem:
                         # Iter 276 — emit a REAL per-file event before
                         # entering the Parliament call so the frontend
@@ -1623,6 +1989,20 @@ class LoopEngine:
                             # frames — this cleanup was demanded
                             # after the founder observed two
                             # heartbeat loops racing per file.
+                            # Findings fix 2026-11-25 — single-model
+                            # shortcut: swift/pro first attempt runs one
+                            # call instead of the 3-member vote (see
+                            # should_use_single_model). Maxx, retry
+                            # attempts, and unknown modes keep the full
+                            # Council. Imported lazily like Parliament
+                            # itself so module import stays light.
+                            from core.parliament.routing import (
+                                should_use_single_model as _should_single,
+                            )
+                            _single_model = _should_single(
+                                mode=self.mode, task_type="code_fix",
+                                attempt=attempt,
+                            )
                             result = await asyncio.wait_for(
                                 _parliament.run(
                                     task=task_text,
@@ -1639,6 +2019,10 @@ class LoopEngine:
                                         "task_type":       "code_fix",
                                         "loop_session_id": self.loop_id,
                                         "user_id":         self.user_id,
+                                        # Findings fix 2026-11-25 —
+                                        # single-model shortcut flag
+                                        # (False = full Council).
+                                        "single_model":    _single_model,
                                         # Iter 362 · Bug A · dynamic
                                         # output budget threaded to
                                         # Council A members via
@@ -1847,7 +2231,7 @@ class LoopEngine:
                 async def _gen_with_bounded_retry(path):
                     last_result = None
                     for attempt in range(1, _MAX_ARTIFACT_ATTEMPTS + 1):
-                        last_result = await _gen_via_parliament(path)
+                        last_result = await _gen_via_parliament(path, attempt=attempt)
                         if last_result:
                             return last_result
                         if attempt < _MAX_ARTIFACT_ATTEMPTS:
@@ -2838,7 +3222,7 @@ class LoopEngine:
             edit — no LLM roundtrip.
           • DUPLICATES across scanners are merged.
           • DEFERRED items go to backlog, not to a wasteful rewrite.
-          • Only REAL_BUG findings hit Parliament.heal.
+          • Only REAL_BUG findings hit Parliament.healer.heal.
         """
         from services.fix_triage import apply_triage_before_heal
         healed_any = False
@@ -2938,14 +3322,28 @@ class LoopEngine:
             try:
                 from core.parliament import Parliament as _P
                 _parl = _P(db=self.db)
-                heal_result = await _parl.heal(
+                # Findings fix 2026-11-25 — Parliament has NO `heal`
+                # method, so the old call raised AttributeError (swallowed
+                # by the except below) and full-scan heal silently never
+                # ran. Use the healer the verify phase uses
+                # (`_parl.healer.heal`, SelfHeal.heal), with the same
+                # {output, score, error} attempt shape and the
+                # {"status": "retry", "output": ...} contract — NOT the
+                # invented file_path/current_content/last_error kwargs
+                # or the "content" key the old code read back.
+                heal_result = await _parl.healer.heal(
                     task=heal_task,
-                    file_path=path,
-                    current_content=target.get("content") or "",
-                    last_error="\n".join(error_lines),
-                    user_id=self.user_id,
+                    all_attempts=[{
+                        "output": target.get("content") or "",
+                        "score":  0.0,
+                        "error":  "\n".join(error_lines),
+                    }],
+                    round_num=0,
+                    max_rounds=MAX_SELF_HEALS,
                 )
-                new_content = (heal_result or {}).get("content") or ""
+                new_content = ""
+                if (heal_result or {}).get("status") == "retry":
+                    new_content = heal_result.get("output") or ""
                 if new_content and new_content != target.get("content"):
                     with contextlib.suppress(Exception):
                         await record_backup(
@@ -3735,8 +4133,15 @@ class LoopEngine:
             # Pillar 1 (2026-06) — pre-ship application snapshot.
             # Captures byte-exact pre-ship contents of every file this
             # commit touches (+ loop/project DB state) to R2, enabling
-            # snapshot-based rollback. Fail-open: snapshot infra must
-            # never block a ship, but failures are loudly recorded.
+            # snapshot-based rollback.
+            # Part XIII · 3(b) (2026-11-26) — FAIL-CLOSED. The old
+            # comment here read "Fail-open: snapshot infra must never
+            # block a ship" — that is REVERSED by the ORA audit fix:
+            # a ship with no valid rollback snapshot now aborts
+            # BEFORE commit_files, so a landed commit can never lack
+            # the snapshot its rollback depends on. The failure is
+            # still loudly recorded (log + founder alert) AND now
+            # aborts the push with a clear error.
             try:
                 from services.rollback_snapshot import create_snapshot
                 _snap = await create_snapshot(
@@ -3746,15 +4151,22 @@ class LoopEngine:
                     project_id=getattr(self, "project_id", "") or "",
                     loop_id=self.loop_id, trigger="pre_ship",
                 )
+                _snap_id = (_snap or {}).get("snapshot_id")
+                if not _snap_id:
+                    raise ValueError(
+                        "create_snapshot returned no snapshot_id")
+                self.context["pre_ship_snapshot_ok"] = True
                 await self.db.loop_sessions.update_one(
                     {"loop_id": self.loop_id},
-                    {"$set": {"pre_ship_snapshot_id": _snap["snapshot_id"]}},
+                    {"$set": {"pre_ship_snapshot_id": _snap_id}},
                 )
                 logger.info("[loop %s] pre-ship snapshot %s captured",
-                            self.loop_id, _snap["snapshot_id"])
+                            self.loop_id, _snap_id)
             except Exception as _snap_err:  # noqa: BLE001
                 logger.warning("[loop %s] pre-ship snapshot FAILED: %r",
                                self.loop_id, _snap_err)
+                self.context["pre_ship_snapshot_ok"] = False
+                self.context["pre_ship_snapshot_error"] = repr(_snap_err)[:500]
                 try:
                     from services.founder_alerts import send_founder_alert
                     await send_founder_alert(
@@ -3766,6 +4178,15 @@ class LoopEngine:
                     )
                 except Exception:
                     pass
+                # Part XIII · 3(b) — fail-closed: do NOT proceed to
+                # commit_files. Abort the push path with a clear
+                # error; no commit is created, nothing is pushed.
+                await self._fail_ship(
+                    "Pre-ship rollback snapshot failed — ship aborted "
+                    "before any commit so the change stays unpushed "
+                    f"(no rollback snapshot exists): {str(_snap_err)[:200]}"
+                )
+                return
             # Iter 212m-218 — real developer identity + Conventional
             # Commits + Co-authored-by trailer. The commit_message
             # arriving here may be either the raw user task or an
@@ -3816,8 +4237,14 @@ class LoopEngine:
         # Best-effort: a PR-open/label failure must never lose an
         # already-landed commit — falls back to reporting the raw
         # commit the same way the non-PR path always has.
+        # Part XIII · 3(c) — the fallback stays, but the failure is
+        # no longer silent: `pr_err` is recorded on the run (context
+        # commit + terminal COMPLETED frame + narration) so the user
+        # can see the PR never opened instead of reading a plain
+        # "Shipped {sha}" identical to the direct-commit path.
         pr_url = None
         pr_number = None
+        pr_err = None
         if ship_via_pr and pr_ship_branch:
             try:
                 from services.loop_safety import open_or_reuse_pr, add_pr_label
@@ -3841,6 +4268,11 @@ class LoopEngine:
                 if pr_err:
                     logger.warning("[loop %s] ship-via-PR open_or_reuse_pr failed: %s",
                                    self.loop_id, pr_err)
+                    try:
+                        await _log_error(self.db, self.loop_id, "ship",
+                                         f"ship-via-PR failed: {pr_err}")
+                    except Exception:
+                        pass
                 elif pr_url:
                     pr_number = result.get("pr_number")
                     if not result.get("reused") and pr_number:
@@ -3857,8 +4289,14 @@ class LoopEngine:
                     except Exception:
                         pass
             except Exception as _pr_e:                        # noqa: BLE001
+                pr_err = repr(_pr_e)
                 logger.warning("[loop %s] ship-via-PR open/label failed: %r",
                                self.loop_id, _pr_e)
+                try:
+                    await _log_error(self.db, self.loop_id, "ship",
+                                     f"ship-via-PR failed: {pr_err}")
+                except Exception:
+                    pass
 
         # ── Iter 272 Feature 2.1 — record the shipped commit so
         # future runs can detect repeat_touch on the same file paths.
@@ -3915,6 +4353,12 @@ class LoopEngine:
             # commit path — zero shape change there.
             "pr_number":  pr_number,
             "pr_branch":  pr_ship_branch if pr_url else None,
+            # Part XIII · 3(c) — the ship-via-PR failure (if any) is
+            # recorded on the run so history/narration can tell "PR
+            # failed" apart from "PR was never requested". None on
+            # the direct-commit path and on PR success — zero shape
+            # change there.
+            "pr_error":   pr_err,
             # R1a gap#4 (2026-08-30) — the branch head immediately after
             # THIS ship landed (== full_sha, since this push just became
             # that branch's tip). Rollback re-fetches the LIVE head at
@@ -4054,6 +4498,12 @@ class LoopEngine:
         # to the always-on direct-commit path everyone currently uses.
         if pr_url:
             ship_text = f"PR opened for {short_sha} — merge it on GitHub to make it live"
+        elif pr_err:
+            # Part XIII · 3(c) — ship-via-PR was requested but the PR
+            # never opened; say so in the narration instead of the
+            # plain "Shipped {sha}" the direct-commit path uses.
+            ship_text = (f"Shipped {short_sha} — PR could not be opened: "
+                         f"{str(pr_err)[:120]}")
         else:
             ship_text = f"Shipped {short_sha}"
         await self._narrate(
@@ -4061,7 +4511,8 @@ class LoopEngine:
             text=ship_text,
             correlation_id="ship:commit_1",
             extra={"commit_sha": short_sha, "html_url": html_url,
-                   "pr_url": pr_url, "pr_number": pr_number},
+                   "pr_url": pr_url, "pr_number": pr_number,
+                   "pr_error": pr_err},
         )
         await self._emit(LoopState.COMPLETED, "ship",
                          step=5, total_steps=5,
@@ -4075,6 +4526,10 @@ class LoopEngine:
                              "html_url":       html_url,
                              "pr_url":         pr_url,
                              "pr_number":      pr_number,
+                             # Part XIII · 3(c) — PR failure surfaced
+                             # on the terminal frame (None when the PR
+                             # opened or was never requested).
+                             "pr_error":       pr_err,
                              "repo":           f"{owner}/{repo}",
                              "branch":         branch,
                              "files_changed":  list(files_dict.keys()),
@@ -4520,10 +4975,19 @@ class LoopEngine:
             "loop_id":    self.loop_id,
             "user_id":    self.user_id,
             "project_id": self.project_id,
+            # Part XIII · 2(a) — persist the review mode with the
+            # session so rehydration + history can see it.
+            "mode":       self.mode,
             "state":      self.state.value,
             "phase":      self.phase,
             "context":    self.context,
         }
+        # P1g — mirror the claimed job record into every persist so
+        # the session doc always carries the live lease. Omitted
+        # while unclaimed (fresh/rehydrated engines) so existing
+        # docs keep their shape until a job is actually claimed.
+        if self._job:
+            out["job"] = dict(self._job)
         if extra:
             out.update(extra)
         return out
@@ -4621,211 +5085,9 @@ _TERMINAL = {LoopState.COMPLETED, LoopState.FAILED, LoopState.ABORTED}
 
 # ─── Adapter layer ────────────────────────────────────────────────────
 
-async def _generate_plan(user_id: str, project_id: Optional[str],
-                         user_message: str) -> dict:
-    """Call the existing LLM to produce a structured plan.  Returns a
-    dict with: title, files_to_change (list of paths), bullets (list
-    of strings), estimated_time.
-
-    Iter 212m-116 — Inject a COMPACT repo map (file paths + symbols +
-    imports per file, no raw content) into the planner system prompt
-    when a graph exists. Reduces planner token cost ~60% on
-    repo-aware projects without losing the signal needed to pick the
-    right files.
-
-    Iter 322 — Latency profiling. Live incident loop_678eea28436c4e
-    took 21.6s to plan a one-line README edit. Record per-segment
-    timings (graph refresh vs repo map read vs LLM call) so the
-    speed-diagnostic dashboard can identify where the wall-clock
-    actually goes. Returned as `plan['_profile']` — callers stash
-    it into loop_run_log under kind='plan_latency_profile'.
-    """
-    import time as _time
-    from services.llm import call_llm_with_meta
-
-    _t0 = _time.monotonic()
-    _profile: dict = {
-        "graph_refresh_s":  0.0,
-        "repo_map_read_s":  0.0,
-        "llm_call_s":       0.0,
-        "json_parse_s":     0.0,
-        "total_s":          0.0,
-        "graph_refreshed":  False,
-        "repo_map_present": False,
-    }
-
-    # Inject the compact repo map if available (cheap — single DB read).
-    # Iter 212m-117 — Auto-refresh stale graphs (>30 min old) before
-    # building the map so the planner always sees the current state of
-    # the user's repo. Incremental build (iter 113) means an unchanged
-    # repo costs ZERO new LLM tokens to refresh — just a regex pass +
-    # blob_sha diff. Best-effort: a refresh failure must NOT block plan.
-    repo_map_block = ""
-    try:
-        from cto_services.db import get_db
-        from services.repo_map import build_repo_map
-        db = get_db()
-        # Stale-check the graph; if >30 min old, rebuild silently.
-        if db is not None and project_id:
-            try:
-                from services.graph_builder import build_graph
-                import time as _time
-                prior = await db.project_graphs.find_one(
-                    {"project_id": project_id, "user_id": user_id},
-                    {"_id": 0, "built_at": 1},
-                )
-                age = _time.time() - (
-                    (prior or {}).get("built_at") or 0
-                ) if prior else float("inf")
-                if (not prior) or age > 30 * 60:
-                    proj = await db.cto_projects.find_one(
-                        {"project_id": project_id, "user_id": user_id},
-                        {"_id": 0, "github_owner": 1, "github_repo": 1,
-                         "github_branch": 1, "github_token": 1,
-                         "auth_method": 1, "installation_id": 1, "user_id": 1},
-                    )
-                    if proj and proj.get("github_owner") and proj.get("github_repo"):
-                        # 2026-02-11 · Phase 3b (Bug 2 fix) — App-installed projects.
-                        # 2026-06 PAT-removal — App-only.
-                        from services.pat_vault import get_repo_token_or_error
-                        tok, _g_err, _ = await get_repo_token_or_error(proj)
-                        if tok:
-                            logger.info(
-                                "[plan] graph stale (age=%.0fs) — rebuilding silently",
-                                age if age != float("inf") else -1,
-                            )
-                            _t_gr0 = _time.monotonic()
-                            await build_graph(
-                                db=db, project_id=project_id, user_id=user_id,
-                                gh_token=tok,
-                                gh_owner=proj["github_owner"],
-                                gh_repo=proj["github_repo"],
-                                branch=proj.get("github_branch") or "main",
-                            )
-                            _profile["graph_refresh_s"] = round(
-                                _time.monotonic() - _t_gr0, 3,
-                            )
-                            _profile["graph_refreshed"] = True
-                        else:
-                            # 2026-08-27 · Journey Watch investigation Finding 2
-                            # (secondary): this branch used to be a true silent
-                            # no-op — no log, no signal, indistinguishable from
-                            # "graph was already fresh". This is the confirmed
-                            # gate that (combined with the admin display bug,
-                            # fixed separately) explained the 0%-graph figure.
-                            logger.warning(
-                                "[plan] graph build skipped for project=%s user=%s: "
-                                "no usable GitHub token (%s)",
-                                project_id, user_id, _g_err or "unknown",
-                            )
-                    elif proj is not None:
-                        logger.warning(
-                            "[plan] graph build skipped for project=%s user=%s: "
-                            "project missing github_owner/github_repo",
-                            project_id, user_id,
-                        )
-            except Exception as e:                          # noqa: BLE001
-                logger.debug("[plan] silent graph refresh skipped: %r", e)
-        _t_rm0 = _time.monotonic()
-        rm = await build_repo_map(db, project_id, user_id)
-        _profile["repo_map_read_s"] = round(
-            _time.monotonic() - _t_rm0, 3,
-        )
-        if rm.get("has_map"):
-            repo_map_block = (
-                "\n\n--- COMPACT REPO MAP ({n} files, {c} chars) ---\n"
-                "Each line: <path> [<layer>] · symbols: ... · imports: ... · // <desc>\n"
-                "Use this to pick exact files to change. Do NOT invent paths.\n\n"
-                "{m}\n"
-                "--- END REPO MAP ---\n"
-            ).format(n=rm["file_count"], c=rm["char_count"], m=rm["map_text"])
-            _profile["repo_map_present"] = True
-            logger.info(
-                "[plan] injected repo map: %d files, %d chars",
-                rm["file_count"], rm["char_count"],
-            )
-    except Exception as e:                              # noqa: BLE001
-        logger.debug("[plan] repo map injection skipped: %r", e)
-
-    from services.identity import OR_IDENTITY
-    sys_msg = (
-        # 2026-08 · Naming & Identity Canon PR — identity line now
-        # sourced from services/identity.py::OR_IDENTITY (the SAME
-        # constant orchestrator.py's chat persona uses) instead of a
-        # hand-written "You are ORA, an AI CTO" opener.
-        OR_IDENTITY + "  The user is in Loop Mode and needs a "
-        "PLAN ONLY (no code).  Respond with strict JSON:\n"
-        '{\n'
-        '  "title": str (3-7 words),\n'
-        '  "files_to_change": [list of paths you will touch],\n'
-        '  "bullets":         [3-7 short numbered steps],\n'
-        '  "estimated_time":  str (e.g. "~3 minutes")\n'
-        '}\n'
-        "Return ONLY the JSON object — no markdown, no commentary."
-        + repo_map_block
-    )
-    # Iter 349 — hard 30s cap on the LLM call itself so a hung provider
-    # fails fast with a clear message instead of eating the 120s phase
-    # budget while the user watches "Generating plan…" (PROD P0).
-    try:
-        meta = await asyncio.wait_for(
-            call_llm_with_meta(sys_msg, user_message,
-                               review_mode="pro",
-                               mode="loop_plan",
-                               feature="Loop Planning"),
-            timeout=PLAN_LLM_TIMEOUT_S,
-        )
-    except asyncio.TimeoutError:
-        raise RuntimeError(
-            f"Plan LLM call timed out after {PLAN_LLM_TIMEOUT_S}s — the "
-            "model didn't respond in time. Try again, or rephrase with a "
-            "shorter request."
-        )
-    # 2026-08 hardening (F2) — additive: cost-cap breach comes back as a
-    # normal ok:False dict (see _meta.py), not an exception. Raise the
-    # distinguishable _CostCapPaused so start()'s except clause PAUSES
-    # (not fails) the loop.
-    if isinstance(meta, dict) and meta.get("error_code") == "COST_CAP_REACHED":
-        raise _CostCapPaused(meta.get("error") or "Monthly task budget reached.")
-    _profile["llm_call_s"] = round(
-        _time.monotonic() - _t0 - _profile["graph_refresh_s"]
-        - _profile["repo_map_read_s"], 3,
-    )
-    content = (meta or {}).get("content", "").strip()
-    # Tolerate a stray ```json fence.
-    if content.startswith("```"):
-        first_nl = content.find("\n")
-        content = content[first_nl + 1:]
-        if content.endswith("```"):
-            content = content[:-3].rstrip()
-    _t_jp0 = _time.monotonic()
-    try:
-        plan = json.loads(content)
-    except (json.JSONDecodeError, TypeError):
-        plan = {
-            "title": "Plan",
-            "files_to_change": [],
-            "bullets": [content[:500] or "Unable to parse plan."],
-            "estimated_time": "?",
-            "raw": content[:2000],
-        }
-    _profile["json_parse_s"] = round(
-        _time.monotonic() - _t_jp0, 3,
-    )
-    _profile["total_s"] = round(_time.monotonic() - _t0, 3)
-    # Attach the profile so the caller (`_do_plan`) can persist it.
-    if isinstance(plan, dict):
-        plan["_profile"] = _profile
-    logger.info(
-        "[plan] LATENCY PROFILE — total=%.2fs · graph=%.2fs · "
-        "repo_map=%.2fs · llm=%.2fs · json=%.2fs · "
-        "refreshed=%s · map_present=%s",
-        _profile["total_s"], _profile["graph_refresh_s"],
-        _profile["repo_map_read_s"], _profile["llm_call_s"],
-        _profile["json_parse_s"], _profile["graph_refreshed"],
-        _profile["repo_map_present"],
-    )
-    return plan
+# NOTE (P1H, 2026-11-25): `_generate_plan` (+ `_CostCapPaused` /
+# `PLAN_LLM_TIMEOUT_S`) moved verbatim to services/loop_engine_plan.py;
+# re-exported above so call sites keep working unchanged.
 
 
 # Registry of live engines keyed by loop_id, so the same instance can
@@ -4870,6 +5132,12 @@ async def lookup_or_rehydrate(
     Returns None if no session exists OR the persisted state is
     mid-execution (caller gets a clean 404 instead of a stale split-
     brain rehydration).
+
+    P1g exception: a mid-execution doc whose owner is provably dead
+    (see `_job_is_orphaned` — missed job heartbeat, or legacy doc
+    stale past STALE_AFTER_S) is reconciled first (CAS) and then
+    rehydrated as PAUSED, so the caller gets a resumable engine
+    instead of a 404. A live owner's doc still refuses as before.
     """
     eng = _LIVE.get(loop_id)
     if eng is not None:
@@ -4914,12 +5182,34 @@ async def lookup_or_rehydrate(
         LoopState.EXPIRED.value,
     }
     if persisted_state not in _PAUSED_STATES:
-        logger.warning(
-            "[loop %s] refused rehydration in state %s "
-            "(not paused); caller will get 404",
-            loop_id, persisted_state,
-        )
-        return None
+        # P1g — a mid-execution doc whose owner is provably dead
+        # (missed job heartbeat, or legacy doc stale past
+        # STALE_AFTER_S) is NOT "running elsewhere" — it is an
+        # orphan of a dead worker. Reconcile it (CAS: a live owner
+        # heartbeating late, or a racing worker, loses and we
+        # still return None) and fall through to the paused
+        # rehydration below, so the caller gets a resumable engine
+        # instead of a 404. A live owner's doc fails the orphan
+        # test and keeps the old refusal — no split-brain.
+        if _job_is_orphaned(doc):
+            reconciled = await _reconcile_orphaned_job(db, doc)
+            if reconciled is None:
+                return None
+            doc = reconciled
+            persisted_state = doc.get("state")
+            if persisted_state not in _PAUSED_STATES:
+                # Reconcile landed on FAILED (mid-plan death) —
+                # nothing to rehydrate; the doc itself is the
+                # answer (status shows it, no 404; the router's
+                # terminal guard turns a retry into 409).
+                return None
+        else:
+            logger.warning(
+                "[loop %s] refused rehydration in state %s "
+                "(not paused); caller will get 404",
+                loop_id, persisted_state,
+            )
+            return None
     # Iter 212m-169 — Rebuild BINContext during rehydrate so the
     # resumed loop keeps its request-scoped user+project+PAT
     # invariant.  If the PAT no longer decrypts (revoked, HKDF key
@@ -4950,6 +5240,9 @@ async def lookup_or_rehydrate(
             "original_request", "",
         ),
         bin_ctx=rehydrated_bin_ctx,
+        # Part XIII · 2(a) — restore the review mode the loop was
+        # started with (None = full Council, as at start).
+        mode=doc.get("mode"),
     )
     # Restore state machine + accreted context.
     try:
@@ -4959,6 +5252,19 @@ async def lookup_or_rehydrate(
     eng.phase = doc.get("phase") or "plan"
     if doc.get("context"):
         eng.context = doc["context"]
+    # P1k — restore the mode pill the start router resolved. The
+    # EXECUTE engine is this rehydrated instance (confirm lands on a
+    # different request/worker than start), so without this the pill
+    # set at start would be lost and every loop would silently run
+    # the full Council. Absent/unknown → None = full Council (also
+    # the safe default for loops started before this change).
+    from services.mode_routing import normalize_mode_pill as _norm_pill
+    # `or eng.mode`: the constructor above already restored mode
+    # from the doc's top-level "mode" key (part13); the context
+    # dict's "mode" may be absent on loops started before p1k, and
+    # _norm_pill(None) is None — without the fallback this line
+    # would wipe the already-restored mode.
+    eng.mode = _norm_pill((doc.get("context") or {}).get("mode")) or eng.mode
     register(eng)
     logger.info(
         "[loop %s] REHYDRATED from Mongo (state=%s phase=%s) "

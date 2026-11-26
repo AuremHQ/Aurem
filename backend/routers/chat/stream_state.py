@@ -30,6 +30,12 @@ class StreamState:
     user_id: str
     jwt_token: str
     pid_stream: str
+    # P0 audit fix (2026-11-25, D1/D2) — validated X-Client-TZ value
+    # read by chat_stream(); threaded to resolve_pre_llm() (casual
+    # clock), _advisor_panel (advisor clock) and chat_with_tools()
+    # (base-system clock). None → env / Toronto fallback in
+    # build_runtime_context.
+    user_tz: Optional[str] = None
 
     # ── Context built before gen() (immutable once set) ──
     bin_ctx: Any = None
@@ -106,6 +112,14 @@ class StreamState:
     # only). Means: nothing was streamed/persisted for this attempt —
     # safe for the caller to reset and retry once automatically.
     zero_tool_timeout_suppressed: bool = False
+    # P1 L7 — set by stream.py's gen() when it spends the single
+    # auto-retry above (attempt 0's zero-tool-call timeout was
+    # suppressed and a fresh attempt 1 is started). Read by
+    # watchdog.py's timeout finalization so the terminal `done`
+    # payload can report `timeout_retry_exhausted: true` — the turn
+    # already burned its one retry and is now in a terminal/paused
+    # state — instead of looking like a first-attempt timeout.
+    timeout_retried: bool = False
 
     # ── retries.py output, read by sse_stream.py after the
     # confidence-mismatch gate runs ──

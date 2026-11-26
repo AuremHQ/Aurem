@@ -62,19 +62,55 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
 
 
 @lru_cache(maxsize=32)
+def _load_file_cached(filename: str, mtime: float) -> tuple[dict, str]:
+    """Disk-load + parse, memoised keyed by (filename, mtime).
+
+    Part XII (b3): the old `@lru_cache` sat directly on the loader,
+    so a load ERROR (`{}, ""`) was cached forever — a file that
+    appeared (or was flipped draft → approved) later was invisible
+    for the life of the process. Now the cache key includes the
+    file's mtime: a missing file never reaches this function (see
+    `_load_file`), and an edit changes the key, so the new content
+    is picked up with no `cache_clear()` and no restart.
+    """
+    path = os.path.abspath(os.path.join(_KNOWLEDGE_DIR, filename))
+    with open(path, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    return _parse_frontmatter(text)
+
+
 def _load_file(filename: str) -> tuple[dict, str]:
-    """Disk-load + parse once, memoised. filename MUST be one of
+    """Disk-load + parse once per mtime, memoised. filename MUST be one of
     _CANDIDATE_FILES — callers never pass task/user-derived strings
-    here, so os.path.join below can never escape _KNOWLEDGE_DIR."""
+    here, so os.path.join below can never escape _KNOWLEDGE_DIR.
+
+    Failures are NEVER cached: a missing/unreadable file returns
+    `({}, "")` without touching the cache, so a file that appears
+    later is picked up on the next call."""
     path = os.path.abspath(os.path.join(_KNOWLEDGE_DIR, filename))
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            text = fh.read()
-    except FileNotFoundError:
+        mtime = os.stat(path).st_mtime
+    except OSError:
         return {}, ""
-    except Exception:
+    try:
+        return _load_file_cached(filename, mtime)
+    except OSError:
         return {}, ""
-    return _parse_frontmatter(text)
+
+
+# Back-compat for callers/tests that cleared the old loader cache.
+_load_file.cache_clear = _load_file_cached.cache_clear  # type: ignore[attr-defined]
+_load_file.cache_info = _load_file_cached.cache_info  # type: ignore[attr-defined]
+
+
+def _matches_keyword(task: str, kw: str) -> bool:
+    """Word-boundary keyword match (Part XII b2). A bare `in` check
+    let `"rest"` match `"restart"`/`"interest"` and `"ui"` match
+    `"build"` — pure false positives. `\\b` handles single words
+    and multi-word triggers (`"rate limit"`) alike."""
+    if not kw:
+        return False
+    return re.search(r"\b" + re.escape(kw) + r"\b", task) is not None
 
 
 def select_knowledge(task_description: str) -> list[tuple[str, str]]:
@@ -92,7 +128,7 @@ def select_knowledge(task_description: str) -> list[tuple[str, str]]:
         triggers = meta.get("inject_on") or []
         if not isinstance(triggers, list):
             continue
-        if not any(isinstance(kw, str) and kw.lower() in task for kw in triggers):
+        if not any(isinstance(kw, str) and _matches_keyword(task, kw.lower()) for kw in triggers):
             continue
         cap = meta.get("max_chars")
         cap = cap if isinstance(cap, int) and cap > 0 else len(body)
@@ -146,6 +182,11 @@ def load_approved_examples(task_description: str, limit: int = 3) -> list[dict]:
     a human manually curating a new file here; this function has no
     write path and never auto-promotes anything."""
     task = (task_description or "").lower()
+    # Part XII (b1): limit<=0 must inject ZERO examples. The old loop
+    # appended first and checked `len(picked) >= max(0, limit)` second,
+    # so limit=0 returned exactly 1 example whenever one matched.
+    if limit <= 0:
+        return []
     picked: list[dict] = []
     for filename in _list_example_files():
         path = os.path.abspath(os.path.join(_EXAMPLES_DIR, filename))
@@ -158,7 +199,9 @@ def load_approved_examples(task_description: str, limit: int = 3) -> list[dict]:
         if meta.get("status") != "approved":
             continue
         task_type = meta.get("task_type")
-        if isinstance(task_type, str) and task_type and task_type.lower() not in task:
+        # Part XII (b2): word-boundary match, not substring — a
+        # task_type of "rest" must not match a task about "restart".
+        if isinstance(task_type, str) and task_type and not _matches_keyword(task, task_type.lower()):
             continue
         msg, reply = _split_example_body(body)
         if not msg or not reply:

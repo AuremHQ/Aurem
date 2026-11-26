@@ -201,14 +201,22 @@ async def classify_mode_semantic(
     existing `classify_intent()` — byte-identical to pre-2026-09
     behaviour."""
     fallback_mode = _keyword_classify_intent(message, f12_payload, project_id)
+    # Part XII (b2): an omitted session_id must NOT share a global
+    # "" bucket — every session-less caller used to land on the one
+    # "" key, so one caller's hysteresis could flip another's mode.
+    # With no session there is nothing to carry hysteresis across,
+    # so return the keyword fallback without touching _SESSION_STATE
+    # (and without hashing "" into the canary either).
+    if not session_id:
+        return {"mode": fallback_mode, "confidence": None, "source": "keyword", "switched": True}
     if not is_enabled():
         return {"mode": fallback_mode, "confidence": None, "source": "keyword", "switched": True}
-    if not _in_canary(session_id or ""):
+    if not _in_canary(session_id):
         # Outside the canary slice — byte-identical to flag-off, even
         # though the master flag is ON. No hysteresis state touched.
         return {"mode": fallback_mode, "confidence": None, "source": "keyword", "switched": True}
 
-    st = _get_session_state(session_id or "")
+    st = _get_session_state(session_id)
     current = st["current_mode"]
 
     jev_result = await _ask_jev_for_mode(message)

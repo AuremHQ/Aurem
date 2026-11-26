@@ -64,6 +64,12 @@ KNOWN_COMMANDS: tuple[str, ...] = (
     "loop-stats",
     "rule",
     "help",
+    # B10 (2026-11-25): "image" was advertised in the safety prompt
+    # (Founder-only, gpt-image-1) but missing here AND in
+    # slash_commands.DISPATCH, so `/image ...` 400'd unknown_command.
+    # Every entry here MUST have a DISPATCH entry (the API layer
+    # enforces the pairing).
+    "image",
 )
 
 _SLASH_RE = re.compile(r"^/([a-z][a-z0-9\-]*)(?:\s+(.*))?$", re.IGNORECASE)

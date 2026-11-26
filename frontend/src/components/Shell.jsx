@@ -122,6 +122,15 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
   const token = getToken();
   const [health, setHealth] = useState({ ok: true, _initial: true });
   const [sessionId, setSessionIdState] = useState(null);
+  // P0 audit fix (extra #3) — ?session= is a fresh-load deep link
+  // only. openSession() leaves it in the URL on purpose (shareable
+  // link), and the session-resolution effect below re-runs on every
+  // project switch — so a param left over from the previous project
+  // used to be re-adopted under the new project's key. Only the
+  // first run of that effect (a real page load / refresh, where the
+  // link was actually opened) may honour it; later runs strip it
+  // instead of adopting it.
+  const firstSessionEffectRunRef = useRef(true);
   const [sessions, setSessions] = useState([]);
   // Round-2 PR follow-up (2026-08-28, testing_agent finding, MED) —
   // this legacy sidebar Recent Chats rail had its own delete button
@@ -165,9 +174,31 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
   const [activeProjectId, setActiveProjectId] = useState(() =>
     localStorage.getItem("aurem_active_project") || null
   );
+  // P0 audit fix (claim #1) — mirror of activeProjectId for the
+  // project-changed listener below (its []-deps closure would
+  // otherwise see only the mount-time value). Lets the listener tell
+  // a real project change apart from a redundant re-dispatch of the
+  // same id — setActiveProjectId() dispatches unconditionally, so an
+  // unguarded clear would wedge the chat on a null session (the
+  // resolution effect below only re-runs when the id actually
+  // changes).
+  const activeProjectIdRef = useRef(
+    (() => { try { return localStorage.getItem("aurem_active_project") || null; } catch { return null; } })()
+  );
   useEffect(() => {
-    const onChange = () =>
-      setActiveProjectId(localStorage.getItem("aurem_active_project") || null);
+    activeProjectIdRef.current = activeProjectId;
+  }, [activeProjectId]);
+  useEffect(() => {
+    const onChange = () => {
+      const next = localStorage.getItem("aurem_active_project") || null;
+      // P0 audit fix (claim #1) — a real project change clears the
+      // outgoing session id in the SAME batch as the project change,
+      // so no send in the frame(s) before the resolution effect
+      // below runs can pair the new project with the old session
+      // (the send path only gates on the id being truthy).
+      if (next !== activeProjectIdRef.current) setSessionIdState(null);
+      setActiveProjectId(next);
+    };
     window.addEventListener("aurem:project-changed", onChange);
     return () => window.removeEventListener("aurem:project-changed", onChange);
   }, []);
@@ -205,6 +236,18 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
   //      Fix: always mint a brand-new session id when there's nothing
   //      cached — never fetch-and-adopt the server's most recent one.
   useEffect(() => {
+    // P0 audit fix (claim #1) — clear the outgoing session id FIRST,
+    // before any resolution path below runs. The 3000 ms defer path
+    // (AUTO_SEED_FALLBACK_MS) used to keep the old id live for up to
+    // 3 s after a project switch, and the send path only gates on the
+    // id being truthy — so a message sent in that window paired the
+    // NEW project with the OLD session. With the id nulled here the
+    // gate blocks sends until the new session resolves. (The sync
+    // paths re-resolve in the same batch, so the null never commits
+    // for them; only the defer path shows a transient null.)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSessionIdState(null);
+
     const key = sessionKeyFor(activeProjectId);
 
     let freshLogin = false;
@@ -229,6 +272,22 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
     let urlSessionId = null;
     try { urlSessionId = new URLSearchParams(window.location.search).get("session"); } catch { /* ignore */ }
 
+    // P0 audit fix (extra #3) — see firstSessionEffectRunRef above.
+    // A ?session= still in the URL on a LATER run was left there by
+    // openSession() for the PREVIOUS project (or survived a failed
+    // strip): never re-adopt it under the new project's key — strip
+    // it and fall through to the sticky/cached/mint paths below.
+    const isFirstSessionEffectRun = firstSessionEffectRunRef.current;
+    firstSessionEffectRunRef.current = false;
+    if (urlSessionId && !isFirstSessionEffectRun) {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("session");
+        window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+      } catch { /* ignore */ }
+      urlSessionId = null;
+    }
+
     let stickySession = null;
     let cachedSession = null;
     if (!freshLogin) {
@@ -250,7 +309,7 @@ export default function Shell({ children, requireAuth, chromeless = false }) {
       try {
         const url = new URL(window.location.href);
         url.searchParams.delete("session");
-        window.history.replaceState(window.history.state, "", url.pathname + url.search);
+        window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
       } catch { /* ignore */ }
       return;
     }

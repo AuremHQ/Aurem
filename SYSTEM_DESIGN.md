@@ -146,7 +146,7 @@ FASTAPI (main.py, 94 include_router, prefix /api/aurem-dev)   ← preview: Emerg
 | Item | Status | Evidence |
 |---|---|---|
 | Environments | ✅ | preview (Emergent pod, `REACT_APP_BACKEND_URL`), prod `auremcto.com`; `.env` per env |
-| CI | ⚠️ red | `.github/workflows/`: `ci.yml` (0/183 green pushes in 30 d), `quality-gate.yml` (invariants lane fixed 2026-09-06, 704/704 locally), visual regression, G15/G21 jobs, weekly QA, rebaseline |
+| CI | ⚠️ red | `.github/workflows/`: `ci.yml` (0/183 green pushes in 30 d — pre-fix figure as of 2026-11-25; P1d fixed the sim-user QA wiring that guaranteed skip/fail — probe-token mismatch, `needs: [backend-tests]` skip cascade, blind boot, keyless-run preflight — re-measure after the next runs; org Actions billing failure, if still present, is owner-gated), `quality-gate.yml` (invariants lane fixed 2026-09-06, 704/704 locally), visual regression, G15/G21 jobs, weekly QA, rebaseline |
 | CD | ⚠️ | prod deploy is manual via Emergent toolbar (founder); `deploy.yml`/`auto_deploy.yml` exist but not the live path; founder states Render + Mongo Atlas for hosting — **no `render.yaml` in repo** |
 | Migrations in deploy | ❌ | not part of deploy; run by hand |
 | Rollback | ✅ | rollback drill gate G12 + `user_rollback` router |

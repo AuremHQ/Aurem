@@ -322,11 +322,16 @@ async def commit_files(
             await progress(step, status)
 
     # ── Sub-batch 3 (2026-02-12) · Write path migrated to ext_client ────
-    # RETRY OPT-OUT (deliberate): the ref-advance PATCH at the tail of
-    # this function must NEVER be wrapped in call_with_retry.  A retry
-    # racing a concurrent push could advance the branch pointer to a
-    # stale tree; the repeat-PATCH-is-no-op fallback is a secondary
-    # defense — explicit non-retry is the primary one.
+    # RETRY OPT-OUT (deliberate, PARTLY SUPERSEDED Part XIII · 3(a)):
+    # the ref-advance PATCH at the tail of this function must NEVER be
+    # wrapped in call_with_retry — a blind retry racing a concurrent
+    # push could advance the branch pointer to a stale tree. What IS
+    # allowed (Part XIII, 2026-11-26) is ONE deliberate rebase-retry
+    # on 409 only: re-read the live head, rebuild tree+commit on the
+    # FRESH head, then PATCH the fresh commit once. The ref still only
+    # ever advances to a commit whose parent is the live head — the
+    # repeat-PATCH-is-no-op fallback is a secondary defense, explicit
+    # non-blind-retry is the primary one.
     # ────────────────────────────────────────────────────────────────────
     async with ext_client(
         "github",
@@ -407,14 +412,80 @@ async def commit_files(
         _raise_for_status_logged(r, "create commit")
         new_commit_sha = r.json()["sha"]
 
+        # Part XIII · 3(a) — bounded 409 retry (ONE re-attempt, see the
+        # RETRY OPT-OUT note above). A 409 means the branch head moved
+        # under us between the step-0 read and this PATCH (concurrent
+        # push). Instead of orphaning the commit immediately, re-read
+        # the live head and rebuild tree+commit on it (blobs are
+        # already uploaded — content-addressed, no re-upload), then
+        # PATCH the fresh commit once. A second 409 still raises
+        # PushFailedError carrying the LATEST orphaned commit SHA.
+        # (Defined ABOVE the step-4 marker so the neighbour
+        # test_t3_github_writer_raises_pushfailed_not_raw_httpstatuserror
+        # still finds the raise within 1400 chars of "Advance the
+        # branch ref" — the helpers live here, the call site stays
+        # short.)
+        async def _advance_ref(sha: str):
+            return await client.patch(
+                github_ref_url(owner, repo, branch),
+                headers=_headers(token),
+                json={"sha": sha, "force": False},
+            )
+
+        async def _rebuild_on_head(fresh_head: dict) -> str:
+            r_tree = await github_request_with_retry(
+                "POST", github_api_url(owner, repo, "git", "trees"),
+                headers=_headers(token),
+                json={
+                    "base_tree": fresh_head["tree_sha"],
+                    "tree": blob_specs,
+                },
+                timeout=60.0,
+            )
+            _raise_for_status_logged(r_tree, "rebuild tree on fresh head")
+            r_commit = await github_request_with_retry(
+                "POST", github_api_url(owner, repo, "git", "commits"),
+                headers=_headers(token),
+                json={
+                    "message": commit_message,
+                    "tree": r_tree.json()["sha"],
+                    "parents": [fresh_head["sha"]],
+                    "author": {"name": author_name, "email": author_email},
+                },
+                timeout=60.0,
+            )
+            _raise_for_status_logged(r_commit, "rebuild commit on fresh head")
+            return r_commit.json()["sha"]
+
+        async def _push_with_409_retry(first_sha: str):
+            """PATCH the ref once; on 409 re-read the head, rebuild on
+            the fresh head and PATCH once more. Returns (response,
+            final_sha); response is None when the re-read proves the
+            first PATCH actually landed."""
+            await _p("🚀 Pushing ref…")
+            r0 = await _advance_ref(first_sha)
+            if r0.status_code != 409:
+                return r0, first_sha
+            await _p("⚠️ Head moved (409) — re-reading head, rebuilding once…", "warning")
+            try:
+                fresh_head = await _get_branch_head(owner, repo, branch, token)
+            except Exception as _head_err:  # noqa: BLE001
+                raise PushFailedError(
+                    commit_sha=first_sha,
+                    reason=(f"HTTP 409: {r0.text[:200]}; head re-read "
+                            f"failed: {_head_err!r}"[:200]),
+                )
+            if fresh_head["sha"] == first_sha:
+                # The first PATCH actually landed (stale/lost read) —
+                # the ref already points at our commit: success.
+                return None, first_sha
+            rebuilt_sha = await _rebuild_on_head(fresh_head)
+            await _p(f"🔁 Rebuilt commit {rebuilt_sha[:7]} on fresh head — pushing ref…")
+            return await _advance_ref(rebuilt_sha), rebuilt_sha
+
         # 4. Advance the branch ref to the new commit (NOT a force-push;
         # we set it to a descendant of HEAD)
-        await _p("🚀 Pushing ref…")
-        r = await client.patch(
-            github_ref_url(owner, repo, branch),
-            headers=_headers(token),
-            json={"sha": new_commit_sha, "force": False},
-        )
+        r, new_commit_sha = await _push_with_409_retry(new_commit_sha)
         # Ship/Commit Robustness · 2026-08-26 — the commit OBJECT above
         # (step 3) already exists in GitHub's object store at this
         # point even if THIS call fails (branch protection, 409
@@ -423,7 +494,7 @@ async def commit_files(
         # committed at all" (steps 1-3 failing). Raise a typed error
         # carrying the orphaned SHA so the ship-report path never
         # collapses this into "nothing was committed."
-        if r.status_code >= 400:
+        if r is not None and r.status_code >= 400:
             raise PushFailedError(
                 commit_sha=new_commit_sha,
                 reason=f"HTTP {r.status_code}: {r.text[:200]}",

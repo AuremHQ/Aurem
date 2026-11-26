@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import logging
+import posixpath
 import re
 import time
 from typing import Optional
@@ -69,17 +70,46 @@ def _is_safe_repo_path(path: str) -> bool:
     """True iff `path` contains only a conservative filename charset
     (letters, digits, space, dot, dash, underscore, `/`) — no shell
     metacharacters (`$`, backtick, `;`, `|`, `&`, parens, quotes,
-    newlines, etc.) can ever reach a subprocess call downstream."""
+    newlines, etc.) can ever reach a subprocess call downstream — AND
+    it is repo-relative: no leading `/`, no `..` segment.
+
+    Part XIV (c1/c2) — the helper used to pass "../x" and "/etc/x":
+    `.` and `/` are in the allowed charset, so charset alone cannot
+    reject traversal or absolutes. The write path already blocked
+    those one line above this helper's only call site (and again in
+    commit_files), so this was latent, not exploitable — but the
+    helper must be safe to call standalone. Defence-in-depth: the
+    segment check now lives here too.
+    """
     if not path or not isinstance(path, str):
+        return False
+    if path.startswith("/") or ".." in path.split("/"):
         return False
     return not _UNSAFE_PATH_CHARS.search(path)
 
 # ─── Iter 212m-152 — Mandatory syntax gate for write_repo_file ─────
 # Runs `python -m py_compile` for .py, `node --check` for .js/.jsx,
 # and `npx tsc --noEmit` for .ts/.tsx.  Each in a fresh tempfile so
-# the project itself isn't touched.  Falls open on tooling errors
-# (timeout, missing binary) so we never block a commit on local
-# infra flake — better to ship than to deadlock.
+# the project itself isn't touched.
+#
+# Part XIV (b1/b2) — BEHAVIOUR CHANGE, needs conscious review: this
+# gate USED to fail open on EVERY tooling error ("better to ship than
+# to deadlock"). It now FAILS CLOSED when the check could not run
+# because the toolchain is broken — a missing checker binary
+# (FileNotFoundError) or a tempfile-write failure — because those are
+# persistent environment defects, not flakes: shipping unverified
+# code on every write until someone notices the binary is gone is
+# worse than blocking. A TIMEOUT still fails open (a slow/flaky
+# check must not deadlock a commit) and TS type-only errors still
+# pass (parse errors are what this gate blocks; type errors are
+# Vanguard/verify's job) — BUT every skipped verification is now
+# recorded on the commit result ("syntax_gate": {...}) and in
+# ctx["syntax_gate_skipped"], so the ship-gate can see unverified
+# code instead of it shipping silently. Pass
+# allow_unverified_syntax=True in args ONLY as an explicit human
+# override for a single write (same shape as the test-file lock's
+# allow_test_file_change — a human maintainer sets it, the model
+# must not set it on its own behalf).
 
 # 2026-09-04 — DIAGNOSIS + FIX for the "promise-then-silence" hang.
 #
@@ -995,9 +1025,17 @@ async def write_repo_file(ctx: dict, args: dict) -> dict:
 
     # Iter 212m-152 — MANDATORY SYNTAX GATE (Fix 2).
     # Runs after Vanguard but BEFORE the GitHub commit.  Blocks any
-    # commit whose new content contains a syntax error.  Falls open
-    # (allows the commit) on tooling errors or timeouts — better to
-    # ship than block on a flaky local linter.
+    # commit whose new content contains a syntax error.
+    #
+    # Part XIV (b1/b2) — BEHAVIOUR CHANGE (see the module comment):
+    # a skipped check no longer silently ships. Missing checker
+    # binary (FileNotFoundError) or tempfile-write failure BLOCKS
+    # the commit (persistent env defect); a timeout or TS type-only
+    # errors still ship, but the skip is recorded on the result
+    # ("syntax_gate") and in ctx["syntax_gate_skipped"] so the
+    # ship-gate can see the code was never verified. Explicit human
+    # override: allow_unverified_syntax=True in args.
+    _syntax_gate: Optional[dict] = None
     _ext = ""
     try:
         _dot = path.rfind(".")
@@ -1046,14 +1084,58 @@ async def write_repo_file(ctx: dict, args: dict) -> dict:
                 ),
                 "file":           path,
                 "syntax_errors": _gate.get("errors"),
+                "syntax_gate":   {"status": "failed",
+                                  "reason": "syntax_errors"},
             }
         if _gate.get("skipped"):
+            _skip_reason = _gate.get("reason") or "unknown"
             logger.warning(
                 "syntax_gate SKIPPED: %s — %s",
-                path, _gate.get("reason") or "unknown",
+                path, _skip_reason,
             )
+            _syntax_gate = {"status": "skipped", "reason": _skip_reason}
+            # Record the unverified write where the ship-gate can see
+            # it — the old code only logged, so skipped checks shipped
+            # silently. (Empty content is vacuous, not unverified:
+            # there is no code to check, so it is not recorded.)
+            if _skip_reason != "empty_content":
+                try:
+                    ctx.setdefault("syntax_gate_skipped", []).append(
+                        {"path": path, "reason": _skip_reason})
+                except Exception:                            # noqa: BLE001
+                    pass
+            # Fail CLOSED on tooling that cannot run at all: a
+            # missing checker binary or an unwritable tempfile is a
+            # persistent environment defect, not a flake. Timeouts
+            # (TimeoutExpired) and TS type-only errors keep the old
+            # fail-open behaviour so a slow check never deadlocks a
+            # commit — but they are now flagged, not silent.
+            _tooling_broken = (
+                _skip_reason.endswith("FileNotFoundError")
+                or _skip_reason.startswith("tmp_write:")
+            )
+            if _tooling_broken and not (args or {}).get(
+                    "allow_unverified_syntax"):
+                return {
+                    "ok":    False,
+                    "error": "syntax_gate_blocked",
+                    "message": (
+                        "Syntax check could not run — the checker "
+                        f"tooling is broken ({_skip_reason}) — so this "
+                        "commit is blocked rather than shipping "
+                        "unverified code. Fix the environment (restore "
+                        "the python/node/npx binary or tempfile "
+                        "writes) or pass allow_unverified_syntax=True "
+                        "as an explicit human override for this one "
+                        "write."
+                    ),
+                    "file":        path,
+                    "gate":        "syntax_gate",
+                    "syntax_gate": _syntax_gate,
+                }
         else:
             logger.info("syntax_gate PASSED: %s", path)
+            _syntax_gate = {"status": "passed"}
 
     # Commit via the existing atomic Git Data API writer.
     # Iter 212m-218 — resolve real developer identity + normalise
@@ -1113,6 +1195,10 @@ async def write_repo_file(ctx: dict, args: dict) -> dict:
         "html_url": res.get("html_url"),
         "message":  commit_msg,
         "contrast_adjustments": _contrast_note,
+        # Part XIV (b2) — the syntax-gate outcome rides on the commit
+        # record: {"status": "passed"} / {"status": "skipped",
+        # "reason": ...} / absent when no gate ran for this extension.
+        **({"syntax_gate": _syntax_gate} if _syntax_gate else {}),
     }
 
 
@@ -3076,29 +3162,72 @@ def _explicit_paths_in_prompt(prompt: str) -> set[str]:
     return set(_EXPLICIT_PATH_RE.findall(prompt or ""))
 
 
+def _normalize_scope_path(p: str) -> str:
+    """Canonical repo-relative form for scope comparison (Part XIV
+    a2): collapse `./`, `//`, `/./` so `./foo.py`, `src//foo.py` and
+    `foo.py` all match the same scope entry. The old exact-set
+    membership BLOCKED legitimate in-scope writes on spelling
+    alone (fail-closed false positive, not a bypass — no spelling
+    could ever smuggle a write past the gate). `..` segments are
+    left intact: a path containing one never matches a clean scope
+    entry, and write_repo_file rejects it downstream anyway."""
+    if not p or not isinstance(p, str):
+        return ""
+    norm = posixpath.normpath(p.strip().lstrip("/"))
+    return "" if norm == "." else norm
+
+
 def _current_scope(ctx: dict) -> set[str]:
     scope = set(ctx.get("scope_files") or set())
     scope |= _explicit_paths_in_prompt(ctx.get("user_prompt") or "")
-    return scope
+    return {_normalize_scope_path(p) for p in scope
+            if _normalize_scope_path(p)}
 
 
 def _check_write_scope(name: str, args: dict, ctx: dict) -> Optional[dict]:
     """Part C of the 2026-02 context-confusion architecture fix —
     deterministic, pre-emptive scope boundary at the tool-call layer.
     Returns a blocked `{"ok": False, ...}` result if this write falls
-    outside the turn's accumulated scope; None to let it proceed."""
+    outside the turn's accumulated scope; None to let it proceed.
+
+    Part XIV (a1/a3) — BEHAVIOUR CHANGE: an EMPTY scope now BLOCKS
+    the write instead of allowing it. The old early return ("no
+    boundary to enforce against") let the very first write of a turn
+    target any repo-relative path — the gate's own docstring ("a
+    write can only target a file this turn has actually discovered
+    or that the user explicitly named") was false on the first call.
+    Scope has three sources — paths named in the user's own prompt,
+    the orchestrator's task-state pre-seed, and prior read/list/
+    search calls — so a write the user asked for by name still
+    passes on the first call; a write to an unnamed, undiscovered
+    file must now read/list/search it first. Single-shot-write
+    flows that relied on the old allowance break loudly (with
+    instructions) instead of silently writing anywhere.
+    """
     path = (args or {}).get("path") or ""
     if not path:
         return None
     scope = _current_scope(ctx)
     if not scope:
-        # Nothing discovered/named yet this turn — no boundary to
-        # enforce against. Preserves every existing single-shot-write
-        # flow where the model already knew its target from the prompt
-        # alone and this same call would otherwise be the FIRST tool
-        # call of the turn.
-        return None
-    if path in scope:
+        # Nothing discovered/named yet this turn — fail CLOSED.
+        logger.warning(
+            "Part-C scope gate BLOCKED %s(path=%r) — empty scope: "
+            "no file discovered or named yet this turn", name, path,
+        )
+        return {
+            "ok": False,
+            "error": (
+                f"Tool {name} blocked: `{path}` is outside scope — "
+                "no file has been discovered or named yet this turn. "
+                "Call read_repo_file, list_repo_files, or search_repo "
+                "on that exact path first, or have the user name the "
+                "file — a write can only target a file this turn has "
+                "actually discovered or that the user explicitly named."
+            ),
+            "error_class": "scope_blocked",
+            "system_signal": "scope_blocked",
+        }
+    if _normalize_scope_path(path) in scope:
         return None
     logger.warning(
         "Part-C scope gate BLOCKED %s(path=%r) — outside this turn's "
@@ -3120,11 +3249,13 @@ def _check_write_scope(name: str, args: dict, ctx: dict) -> Optional[dict]:
 
 def _record_discovered_scope(name: str, args: dict, data, ctx: dict) -> None:
     """Part C — accumulate every path a successful read/list/search
-    tool call touched this turn into ctx['scope_files']."""
+    tool call touched this turn into ctx['scope_files']. Stored in
+    canonical form (_normalize_scope_path) so later writes match
+    regardless of `./`/`//` spelling (Part XIV a2)."""
     scope = ctx.setdefault("scope_files", set())
     p = (args or {}).get("path")
-    if p:
-        scope.add(p)
+    if p and _normalize_scope_path(p):
+        scope.add(_normalize_scope_path(p))
     if not isinstance(data, dict):
         return
     for key in ("files", "paths", "results", "matches", "tree"):
@@ -3133,11 +3264,12 @@ def _record_discovered_scope(name: str, args: dict, data, ctx: dict) -> None:
             continue
         for item in val:
             if isinstance(item, str):
-                scope.add(item)
+                if _normalize_scope_path(item):
+                    scope.add(_normalize_scope_path(item))
             elif isinstance(item, dict):
                 for pk in ("path", "file", "filepath"):
-                    if item.get(pk):
-                        scope.add(item[pk])
+                    if item.get(pk) and _normalize_scope_path(item[pk]):
+                        scope.add(_normalize_scope_path(item[pk]))
                         break
 
 
@@ -3172,11 +3304,12 @@ async def invoke_local_tool(name: str, args: dict, ctx: dict) -> Optional[dict]:
     existing post-hoc scope-creep/hallucination content-scanning gate
     (`cto_projects_helpers.py`'s `_hallucination_reasons` etc, which
     still runs afterward as a second safety net on the actual diff
-    content). Only enforced once scope is non-empty for this turn —
-    if the model hasn't named or discovered ANY file yet, there's
-    nothing to bound against, so writes proceed exactly as before
-    (this preserves all existing single-shot-write flows where the
-    model already knows the target from the prompt).
+    content). Part XIV (a1) — the gate is now FAIL-CLOSED on empty
+    scope: if the model hasn't named or discovered ANY file yet, a
+    write is blocked (with instructions to read/list first) instead
+    of proceeding. The old "enforced only once scope is non-empty"
+    allowance was the bypass; single-shot writes now need the user
+    to name the file in the prompt or a prior discovery call.
     """
     fn = LOCAL_TOOLS.get(name)
     if not fn:

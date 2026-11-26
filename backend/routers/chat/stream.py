@@ -19,7 +19,7 @@ from cto_services.db import get_db
 from services.orchestrator import chat_with_tools  # noqa: F401 — test patch target (monkeypatch stream.chat_with_tools)
 from services.llm import call_emergent_watchdog
 from services.repo_context import get_repo_context
-from services.usage import is_founder_email  # Iter 212m-169 — BINContext role check
+from services.usage import assert_has_budget, is_founder_email  # Iter 212m-169 — BINContext role check; assert_has_budget moved to module level (P1/L1) so tests can patch it on this namespace
 from services.chat_helpers import (
     _detect_mode, _deduct_tokens,
     _safe_provenance, detect_prompt_injection,
@@ -31,7 +31,7 @@ from services.chat_helpers import (
 )
 from .misc import (
     PLAIN_ENGLISH_EXPLAIN_CONTRACT, BUSINESS_OWNER_VOICE_CONTRACT,
-    ORA_PANEL_TONE,
+    ORA_PANEL_TONE, business_voice_applies,
 )
 from .turn import ChatBody
 from . import router
@@ -333,36 +333,82 @@ async def _chat_stream_define_safe():
     return _safe
 
 
-async def _chat_stream_prepare_project_council_context(body, user_id, _safe, repo_ctx, url_ctx, brain_ctx):
+# P1/L1 — fail-fast concurrent gather for the pre-flight waves.
+# asyncio.gather on its own does NOT cancel siblings when one child
+# raises, so a failing gate (budget / injection 400 / rate-limit 429
+# / bin_ctx 503) would leave the other pre-flight tasks running
+# detached after the request already failed. This wrapper cancels
+# them and awaits their settlement before re-raising, so a refused
+# turn aborts exactly as immediately as the old sequential awaits
+# did. Returns results in input order. (One deliberate difference
+# from sequential: when TWO gates would fail, the one that fails
+# FIRST in time wins, not the one listed first — both are pre-LLM
+# refusals, so the user-visible outcome is the same class of error.)
+async def _gather_preflight(*coros):
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for _t in tasks:
+            if not _t.done():
+                _t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
+async def _chat_stream_fetch_brain_context(body, user_id, _safe, bin_ctx=None):
+    """P1/L1 — the Mongo + PAT + brain fetch split out of
+    `_chat_stream_prepare_project_council_context` so it can run
+    CONCURRENTLY with the repo-context build (wave 2) instead of
+    after it. The return value is identical to what the old helper
+    produced for `brain_ctx` ("" when there is no project, or on any
+    failure; "[PROJECT MEMORY]\\n" + blob otherwise).
+
+    Dedupe: when `bin_ctx` (built in wave 1 by `build_ora_context`)
+    is available it already carries the ownership-verified owner /
+    repo / PAT — the exact same `cto_projects.find_one` +
+    `get_repo_token_or_error` that `build_bin_context` ran minutes
+    earlier in the same request — so reuse it instead of a SECOND
+    find_one + PAT resolution. `bin_ctx=None` (direct callers / no
+    project) falls back to the original find_one + PAT path,
+    unchanged.
+    """
+    brain_ctx = ""
     if body.project_id and body.project_id != "home":
         try:
-            _proj = await asyncio.wait_for(get_db().cto_projects.find_one(
-                {"project_id": body.project_id, "user_id": user_id},
-                {"_id": 0, "github_owner": 1, "github_repo": 1,
-                 "github_token": 1, "auth_method": 1,
-                 "installation_id": 1, "user_id": 1},
-            ), timeout=10.0)   # Iter 212m-177 P1-6 hard cap
-            owner = (_proj or {}).get("github_owner") or ""
-            repo = (_proj or {}).get("github_repo") or ""
-            repo_full = f"{owner}/{repo}" if owner and repo else body.project_id
-            from services.project_brain import get_brain_context
-            # Best-effort: surface the GitHub PAT so the brain can pull
-            # the last 5 commits from the remote — covers commits made
-            # outside AUREM (direct CLI pushes / other contributors).
-            # 2026-02-11 · Phase 3b (Bug 2 fix) — dual-auth token resolver.
-            _pat = None
-            try:
-                # 2026-06 PAT-removal — App-only, no OAuth fallback.
-                from services.pat_vault import get_repo_token_or_error
-                async def _pat_lookup():
-                    t, _e, _d = await get_repo_token_or_error(_proj or {})
-                    return t
-                _pat = await asyncio.wait_for(_pat_lookup(), timeout=10.0)
-            except Exception:
+            if bin_ctx is not None:
+                owner = (bin_ctx.repo_owner or "")
+                repo = (bin_ctx.repo_name or "")
+                repo_full = f"{owner}/{repo}" if owner and repo else body.project_id
+                _pat = bin_ctx.pat or None
+            else:
+                _proj = await asyncio.wait_for(get_db().cto_projects.find_one(
+                    {"project_id": body.project_id, "user_id": user_id},
+                    {"_id": 0, "github_owner": 1, "github_repo": 1,
+                     "github_token": 1, "auth_method": 1,
+                     "installation_id": 1, "user_id": 1},
+                ), timeout=10.0)   # Iter 212m-177 P1-6 hard cap
+                owner = (_proj or {}).get("github_owner") or ""
+                repo = (_proj or {}).get("github_repo") or ""
+                repo_full = f"{owner}/{repo}" if owner and repo else body.project_id
+                # Best-effort: surface the GitHub PAT so the brain can pull
+                # the last 5 commits from the remote — covers commits made
+                # outside AUREM (direct CLI pushes / other contributors).
+                # 2026-02-11 · Phase 3b (Bug 2 fix) — dual-auth token resolver.
                 _pat = None
+                try:
+                    # 2026-06 PAT-removal — App-only, no OAuth fallback.
+                    from services.pat_vault import get_repo_token_or_error
+                    async def _pat_lookup():
+                        t, _e, _d = await get_repo_token_or_error(_proj or {})
+                        return t
+                    _pat = await asyncio.wait_for(_pat_lookup(), timeout=10.0)
+                except Exception:
+                    _pat = None
             # Iter 157 — also wrap brain context in the same 12s budget;
             # this used to be the slowest of the three on first turn
             # because it pulls remote commit history.
+            from services.project_brain import get_brain_context
             brain_ctx = await _safe(
                 get_brain_context(
                     get_db(), body.project_id, repo_full,
@@ -375,6 +421,41 @@ async def _chat_stream_prepare_project_council_context(body, user_id, _safe, rep
         except Exception:
             logger.exception("chat: brain context fetch failed (continuing)")
             brain_ctx = ""
+    return brain_ctx
+
+
+# P1/L2 — token emission WITHOUT artificial pacing.
+# The main-path drip loop used to re-slice the finished reply into
+# 6-char frames with `await asyncio.sleep(0.012)` between them —
+# ~2 ms of pure pacing delay per character AFTER the model had
+# finished, so a 6,000-char reply took ~12 s to reach the user.
+# Frames are now content-sized (512 chars) and yielded as fast as
+# the transport allows: no sleep, no fixed 6-char slicing. The
+# retry-replay path (`_replay_retry_gen`, 16 chars / 5 ms) is
+# deliberately UNCHANGED — it replays a persisted record, not a
+# live generation.
+_TOKEN_EMIT_CHUNK = 512
+
+
+async def _emit_content_tokens(content: str, chunk_size: int = _TOKEN_EMIT_CHUNK):
+    """Yield `content` in content-sized frames, with no pacing delay.
+    An async generator (not a plain function) so `gen()` can
+    `async for` over it inside its existing mid-stream-drop
+    try/finally, which tracks the emitted character count itself.
+    """
+    for i in range(0, len(content), chunk_size):
+        yield content[i:i + chunk_size]
+
+
+async def _chat_stream_prepare_project_council_context(body, user_id, _safe, repo_ctx, url_ctx, brain_ctx):
+    """P1/L1 — join step only now. The Mongo + PAT + brain fetch
+    that used to run sequentially INSIDE this helper now runs
+    concurrently in wave 2 (`_chat_stream_fetch_brain_context`); the
+    caller passes the already-fetched `brain_ctx` in. Signature and
+    return shape are unchanged so existing callers keep working, and
+    the join order (repo, brain, url) is identical to before. `body`
+    / `user_id` / `_safe` are retained for signature compatibility
+    (the fetch that needed them moved out)."""
     extra_sys = "\n\n".join(
         s for s in (repo_ctx, brain_ctx, url_ctx) if s
     )
@@ -412,6 +493,22 @@ async def _chat_stream_guard_shell_handoff(body, user_id):
 
 async def _chat_stream_setup_ora_panel(body, user, extra_sys, _recall_mode, _council_block, _council_recalled):
     if not body.ora_panel:
+        # P1/L1 — council retrieval and knowledge injection are
+        # independent (both read body.prompt / user / project, both
+        # only PREPEND to extra_sys). They used to run sequentially;
+        # now they run concurrently and are composed in the SAME
+        # order as before: knowledge prepended last, so it lands
+        # FIRST, council second, incoming extra_sys third.
+        #
+        # Exactness notes (checked against the old sequential code):
+        #   • `_recall_mode` is assigned exactly when the old code
+        #     assigned it: DB present + imports OK + classify_intent
+        #     did not raise. A council fetch failure still degrades
+        #     to an empty block (never raises out of here).
+        #   • Knowledge still runs even when there is no DB (old
+        #     code ran it unconditionally after the council block).
+        _council_coro = None
+        _council_mode = None
         try:
             from cto_services.db import get_db as _get_db
             from services.ora_council_retriever import get_council_few_shot
@@ -425,36 +522,58 @@ async def _chat_stream_setup_ora_panel(body, user, extra_sys, _recall_mode, _cou
                 # intent's taxonomy), not "code"/"chat" (_detect_mode's).
                 # Computed once here and reused below at the existing
                 # A/B/C/D/E broadcast so we don't classify twice.
-                _recall_mode = classify_intent(body.prompt or "", body.f12_payload, body.project_id)
-                _council_block, _council_recalled = await asyncio.wait_for(
-                    get_council_few_shot(
-                        _db_ref, body.prompt or "",
-                        mode=_recall_mode,
-                        user_id=user.get("user_id"),
-                        project_id=body.project_id,
-                        k=2,
-                    ), timeout=10.0)
-                if _council_block:
-                    extra_sys = (_council_block
-                                 + ("\n\n" + extra_sys if extra_sys else ""))
+                _council_mode = classify_intent(body.prompt or "", body.f12_payload, body.project_id)
+
+                async def _council_fetch():
+                    try:
+                        _block, _count = await asyncio.wait_for(
+                            get_council_few_shot(
+                                _db_ref, body.prompt or "",
+                                mode=_council_mode,
+                                user_id=user.get("user_id"),
+                                project_id=body.project_id,
+                                k=2,
+                            ), timeout=10.0)
+                        return _block, _count
+                    except Exception as _cre:
+                        logger.debug("council retrieval skipped (chat/stream): %r", _cre)
+                        return "", 0
+
+                _council_coro = _council_fetch()
         except Exception as _cre:
             logger.debug("council retrieval skipped (chat/stream): %r", _cre)
+            _council_coro = None
 
         # ORA Brain Part 1, Phase D — ONE shared context builder (off
         # by default; see
         # services/knowledge_injector.py::build_answer_context for the
         # full off/shadow/on contract). Same "byte-identical prompt at
         # off/shadow" guarantee as the council block above.
-        try:
-            from services.knowledge_injector import build_answer_context
-            _knowledge_block, _knowledge_files = await build_answer_context(
-                user.get("user_id"), body.project_id, body.prompt or "",
+        async def _knowledge_fetch():
+            try:
+                from services.knowledge_injector import build_answer_context
+                _block, _files = await build_answer_context(
+                    user.get("user_id"), body.project_id, body.prompt or "",
+                )
+                return _block or ""
+            except Exception as _kce:
+                logger.debug("knowledge context skipped (chat/stream): %r", _kce)
+                return ""
+
+        _knowledge_block = ""
+        if _council_coro is not None:
+            _recall_mode = _council_mode
+            (_council_block, _council_recalled), _knowledge_block = await _gather_preflight(
+                _council_coro, _knowledge_fetch(),
             )
-            if _knowledge_block:
-                extra_sys = (_knowledge_block
-                             + ("\n\n" + extra_sys if extra_sys else ""))
-        except Exception as _kce:
-            logger.debug("knowledge context skipped (chat/stream): %r", _kce)
+        else:
+            _knowledge_block = await _knowledge_fetch()
+        if _council_block:
+            extra_sys = (_council_block
+                         + ("\n\n" + extra_sys if extra_sys else ""))
+        if _knowledge_block:
+            extra_sys = (_knowledge_block
+                         + ("\n\n" + extra_sys if extra_sys else ""))
     return _recall_mode, _council_block, _council_recalled, extra_sys
 
 
@@ -464,34 +583,31 @@ async def _chat_stream_setup_plain_english_panel(_r10_council_t0, _recall_mode, 
         time.monotonic() - _r10_council_t0, _recall_mode, _council_recalled,
     )
 
-    # 2026-08-27 · Plain-English Output Contract (Phase 1, flag-gated).
-    # Reuses `_recall_mode` computed above (None when ora_panel=True,
-    # so this block naturally never fires for Ask Advisor).
-    _plain_english_active = False
-    try:
-        if _recall_mode == "A":
+    # P1/L1 — the plain-English flag check is independent of the
+    # house-rules pair below (it appends to the END of extra_sys;
+    # they prepend to the START). They used to run sequentially;
+    # now the flag check runs concurrently with the pair and the
+    # final string is composed in the SAME order as before:
+    #   plain-English append, voice-contract append,
+    #   house-rules prepend, chat-prompt prepend.
+    # The house-rules pair itself stays sequential: one shared
+    # try/except — if the rules read fails, the chat-prompt read is
+    # skipped, exactly as before.
+    async def _plain_flag():
+        try:
+            if _recall_mode != "A":
+                return False
             from services.feature_flags import is_enabled as _pee_enabled
-            if await _pee_enabled(
+            return bool(await _pee_enabled(
                 "explain_plain_english_v1",
                 user_id=user.get("user_id"), tier=user.get("tier"),
-            ):
-                extra_sys = (extra_sys + "\n\n" + PLAIN_ENGLISH_EXPLAIN_CONTRACT).strip()
-                _plain_english_active = True
-    except Exception as _pee_exc:
-        logger.debug("plain_english_contract skipped (chat/stream): %r", _pee_exc)
+            ))
+        except Exception as _pee_exc:
+            logger.debug("plain_english_contract skipped (chat/stream): %r", _pee_exc)
+            return False
 
-    # 2026-08-31 · Business-Owner Voice Contract — every non-ora_panel
-    # turn, not flag-gated (see BUSINESS_OWNER_VOICE_CONTRACT docstring).
-    if not body.ora_panel:
-        extra_sys = (extra_sys + "\n\n" + BUSINESS_OWNER_VOICE_CONTRACT).strip()
-
-    # Iter 212m-24 — Admin House Rules (HIGHEST PRIORITY).
-    # For SSE chat (non-Advisor), scope is "chat" + the requested mode.
-    # For Ask Advisor turns (body.ora_panel == True) we re-resolve
-    # below with target="advisor" so the advisor toggle drives that
-    # flow. Either way the rules block is PREPENDED to extra_sys so
-    # ORA reads them BEFORE its own persona / tools / project ctx.
-    if not body.ora_panel:
+    async def _house_rules_pair():
+        """Returns (hr_block, chat_block). Never raises."""
         try:
             from services.house_rules import (
                 get_active_house_rules, format_house_rules_block,
@@ -500,23 +616,57 @@ async def _chat_stream_setup_plain_english_panel(_r10_council_t0, _recall_mode, 
             _hr_prompt = await asyncio.wait_for(get_active_house_rules(
                 "chat", (body.mode or "swift").lower(),
             ), timeout=10.0)   # Iter 212m-177 P1-6
-            if _hr_prompt:
-                extra_sys = (
-                    format_house_rules_block(_hr_prompt)
-                    + ("\n\n" + extra_sys if extra_sys else "")
-                )
+            _hr_block = (
+                format_house_rules_block(_hr_prompt) if _hr_prompt else ""
+            )
             # Iter 212m-171 — dedicated CHAT prompt slot.
             _chat_extra = await asyncio.wait_for(
                 get_active_chat_prompt(), timeout=10.0)  # Iter 212m-177 P1-6
-            if _chat_extra:
-                extra_sys = (
-                    "=== ADMIN CHAT PROMPT (Iter 212m-171) ===\n"
-                    f"{_chat_extra}\n"
-                    "=== END ADMIN CHAT PROMPT ===\n\n"
-                    + (extra_sys or "")
-                )
+            _chat_block = (
+                "=== ADMIN CHAT PROMPT (Iter 212m-171) ===\n"
+                f"{_chat_extra}\n"
+                "=== END ADMIN CHAT PROMPT ===\n\n"
+            ) if _chat_extra else ""
+            return _hr_block, _chat_block
         except Exception as _hre:
             logger.debug("house_rules injection skipped (chat/stream): %r", _hre)
+            return "", ""
+
+    # 2026-08-27 · Plain-English Output Contract (Phase 1, flag-gated).
+    # Reuses `_recall_mode` computed above (None when ora_panel=True,
+    # so this block naturally never fires for Ask Advisor).
+    _plain_english_active = False
+    if not body.ora_panel:
+        _plain_english_active, (_hr_block, _chat_block) = await _gather_preflight(
+            _plain_flag(), _house_rules_pair(),
+        )
+        if _plain_english_active:
+            extra_sys = (extra_sys + "\n\n" + PLAIN_ENGLISH_EXPLAIN_CONTRACT).strip()
+
+        # 2026-08-31 · Business-Owner Voice Contract — every non-ora_panel
+        # turn, not flag-gated (see BUSINESS_OWNER_VOICE_CONTRACT docstring).
+        # P0 audit fix (2026-11-25, B5) — scoped to non-technical turns
+        # via business_voice_applies(): code/debug/audit turns (recall
+        # modes C/D/E) and loop-execution turns never get it, so it can no
+        # longer ban commit/push/deploy/repo/file/API from a code task.
+        if business_voice_applies(
+            _recall_mode, getattr(body, "execution_mode", None),
+        ):
+            extra_sys = (extra_sys + "\n\n" + BUSINESS_OWNER_VOICE_CONTRACT).strip()
+
+        # Iter 212m-24 — Admin House Rules (HIGHEST PRIORITY).
+        # For SSE chat (non-Advisor), scope is "chat" + the requested mode.
+        # For Ask Advisor turns (body.ora_panel == True) we re-resolve
+        # below with target="advisor" so the advisor toggle drives that
+        # flow. Either way the rules block is PREPENDED to extra_sys so
+        # ORA reads them BEFORE its own persona / tools / project ctx.
+        if _hr_block:
+            extra_sys = (
+                _hr_block
+                + ("\n\n" + extra_sys if extra_sys else "")
+            )
+        if _chat_block:
+            extra_sys = _chat_block + (extra_sys or "")
 
     # Iter 159 — ASK ORA panel uses a deliberately CASUAL voice.
     # This block is injected ONLY when the caller sets ora_panel=true
@@ -559,6 +709,157 @@ async def _chat_stream_setup_plain_english_panel(_r10_council_t0, _recall_mode, 
     return _plain_english_active, extra_sys
 
 
+async def _chat_stream_run_preflight(body, user, request, authorization, _r10_turn_t0):
+    """P1/L1 — the whole pre-flight: sync setups + wave 1 (budget /
+    injection / project-context) + loop-mode + ora-agent + wave 2
+    (repo-context / brain fetch / shell-handoff guard). Returns a
+    dict of everything `chat_stream` needs after the pre-flight.
+    Extracted as one function (instead of inline awaits) so the
+    concurrency is unit-testable: patch the six helpers and assert
+    wall time / overlap. Ordering constraints live in the comment
+    block inside the body.
+    """
+    # Iter 364 · Phase 3 · Token hard-stop enforcement (streaming path).
+    # Same as /chat/send — refuse the request before spending any LLM
+    # tokens when the wallet is empty or the monthly task cap is blown.
+    # 2026-09 · D3 freemium fix — the task/fix-ship monthly cap is now
+    # gated INSIDE resolve_pre_llm (only fires for an actual agentic
+    # fix/ship attempt, never plain chat). Only the token budget is
+    # checked unconditionally here — "chat is unlimited, token-capped
+    # only" per founder decision.
+    #
+    # P1/L1 — the pre-flight awaits below used to run SEQUENTIALLY
+    # (12 awaits, each 10 s-capped, before any LLM call). They now run
+    # in TWO CONCURRENT WAVES via `_gather_preflight` (fail-fast:
+    # the first error cancels the siblings, so a refused turn still
+    # aborts immediately). Ordering constraints, verified against the
+    # old sequential code:
+    #   • The injection scan reads the ORIGINAL prompt, so it runs in
+    #     wave 1, BEFORE loop-mode appends its suffix. The shell-
+    #     handoff guard also reads the prompt, but AFTER the suffix
+    #     (a suffixed prompt is always > 60 chars, so the guard never
+    #     fires on loop turns) — it runs in wave 2.
+    #   • Budget / injection / project-context are mutually
+    #     independent (user_id / prompt / project only).
+    #   • The brain fetch needs `bin_ctx` (wave 1) for the find_one
+    #     + PAT dedupe, so it runs in wave 2 alongside the
+    #     repo-context build.
+    #   • The two sync setups (stream context, _safe) cost ~nothing
+    #     and run first so wave 1 has its inputs; the ora-agent
+    #     setup (also sync) runs after loop-mode, as before.
+    # Wave 1 — budget + injection/founder + project context.
+    # Iter 212m-49 — clear stale LLM provenance from a previous turn
+    # in the same worker so the SSE `done` frame for THIS turn only
+    # reflects what we actually hit this request.
+    jwt_token, user_id, _pg_time, _pg_t0, _db_bc, _pid_stream, bin_ctx = await _chat_stream_setup_stream_context(authorization, user, body)
+    _safe = await _chat_stream_define_safe()
+    _, _is_founder, bin_ctx = await _gather_preflight(
+        assert_has_budget(user["user_id"]),
+        _chat_stream_check_injection_and_founder(body, user, request),
+        _chat_stream_setup_project_context(_pid_stream, user_id, _db_bc, user, _r10_turn_t0, bin_ctx),
+    )
+    # NOTE on the wave-1 return order: _gather_preflight returns
+    # results in INPUT order — budget returns None, so the three
+    # results unpack as (_, _is_founder, bin_ctx). assert_has_budget
+    # is first because it was first in the old sequential order too
+    # (fastest fail for an empty wallet).
+    # Iter 212m-181 — Loop Mode gate. This used to hardcode "founder
+    # only" here (stale since 2026-08-21's Pro/Team rollout — see
+    # services/loop_beta.py), which silently downgraded execution_mode
+    # to "prompt" for every real Pro/Team customer hitting this stream
+    # path (continuation/fallback turns), even though the dedicated
+    # /loop/start kick-off endpoint had already been unlocked for them.
+    # loop_beta.is_user_allowed() is now the single source of truth for
+    # tier eligibility on both entry points so they can't drift apart
+    # again. Concurrency cap / wall-clock budget / stuck-loop auto-trip
+    # live entirely in loop_engine and are unaffected either way. The
+    # kill-switch is checked explicitly below (is_user_allowed() only
+    # answers "is this tier eligible", not "is loop globally off") so
+    # flipping it also stops the [STEP X/5] contract from being
+    # injected into continuation turns, not just new /loop/start calls.
+    await _chat_stream_handle_loop_mode(body, user)
+
+    # Iter 212m-139 — Ask Advisor "No repo connected" bug fix.
+    # Iter 212m-141 — Hardened to filter by ACTUAL GitHub reachability.
+    #
+    # When the frontend hasn't yet stamped an active-project tab (e.g.
+    # the user has exactly one connected repo and never had to click a
+    # tab to switch), `body.project_id` arrives as null/empty. Every
+    # downstream tool (`read_repo_files`, `get_repo_structure`, etc.)
+    # then hits `_resolve_project(..., project_id=None)` and returns
+    # "No project connected", which the LLM faithfully reports back as
+    # "no repo is connected right now" — even though the user has one
+    # Iter 212m-169 — BINContext hardening: the SILENT auto-infer at
+    # this entry point is REMOVED.  When `body.project_id` is
+    # blank/"home" we simply do NOT build a bin_ctx; the caller either
+    # explicitly picked a project (bin_ctx built and validated below)
+    # or they are on the Home casual-chat surface (no repo tools —
+    # the tool dispatch layer refuses cleanly).
+    #
+    # No more silent "one project fits all" heuristic that could
+    # mis-route a chat about Project 1 into Project 2's PAT.  The FE
+    # is responsible for stamping the active project_id on every turn.
+
+    # Iter 38: ORA is founder-only. The ORA API key is shared across all
+    # founders, so we gate at the surface to avoid customer quota burn.
+    # Iter 205 — The Ask Advisor side panel (ORASidePanel) hardcodes
+    # `agent="ora"` for every user. Instead of 403'ing free-tier users
+    # (breaking Ask Advisor entirely), silently downgrade to the default
+    # orchestrator so they get Claude/DeepSeek from their own quota.
+    await _chat_stream_setup_ora_agent(body, user)
+
+    # Iter 157 — COLD START FIX (P1/L1: now actually parallel).
+    # Three context-builders below used to run sequentially with NO
+    # outer timeout:
+    #   - get_repo_context()  → 5-15 GitHub API calls (worst case 15-45s)
+    #   - get_brain_context() → Mongo read + optional GH PAT call (1-5s)
+    #   - build_url_context() → external URL scrape (1-10s)
+    #
+    # On a fresh chat session against a real repo the wall-clock for
+    # JUST the context build was hitting 30-60s BEFORE the LLM was
+    # even invoked, which fed the 300s "thinking…" stalls users were
+    # reporting on production.
+    #
+    # The old comment here claimed the three "run IN PARALLEL via
+    # asyncio.gather" — no gather existed in the file; they ran one
+    # after another. P1/L1 makes it true: repo-context and brain
+    # fetch run concurrently in wave 2 below (each wrapped in
+    # _safe, 12 s budget, degrade-to-empty), and the project
+    # context (bin_ctx) already ran concurrently in wave 1.
+    # Total upper bound for the context phase: ~12s (not 60s+).
+
+    # Iter 212m-23 — URL fetching is NO LONGER done eagerly here.
+    # The orchestrator force-invokes `fetch_url` tool when the prompt
+    # contains an http(s) URL (see services/orchestrator.py forced
+    # URL pre-fetch block). This routes URL content through the
+    # standard tool-invocation pipeline so users see a 📖 Reading URL…
+    # step card and a 🌐 web_sources chip — no more silent context
+    # stuffing that bypassed the tool UI.
+    # Wave 2 — repo context + brain fetch (bin_ctx dedupe) + shell-
+    # handoff guard, concurrently. The guard MUST run after loop-mode
+    # above: it reads body.prompt, and a loop-suffixed prompt is
+    # always > 60 chars, so the guard never fires on loop turns.
+    (repo_ctx, url_ctx), brain_ctx, _clarify_text = await _gather_preflight(
+        _chat_stream_prepare_repo_context(_r10_turn_t0, _safe, user_id, body),
+        _chat_stream_fetch_brain_context(body, user_id, _safe, bin_ctx),
+        _chat_stream_guard_shell_handoff(body, user_id),
+    )
+    return {
+        "jwt_token": jwt_token,
+        "user_id": user_id,
+        "pg_time": _pg_time,
+        "pg_t0": _pg_t0,
+        "pid_stream": _pid_stream,
+        "bin_ctx": bin_ctx,
+        "is_founder": _is_founder,
+        "repo_ctx": repo_ctx,
+        "url_ctx": url_ctx,
+        "brain_ctx": brain_ctx,
+        "clarify_text": _clarify_text,
+        "safe": _safe,
+    }
+
+
 @router.post("/stream")
 async def chat_stream(
     request: Request,
@@ -567,7 +868,34 @@ async def chat_stream(
 ):
     """SSE token-streaming chat. Iter 45: rate-limited to 30 req/min per IP.
     Iter 50.1: founders / unlimited accounts bypass the rate-limit."""
+    # P0 audit fix (2026-11-25, D1/D2) — validated client timezone,
+    # same _valid_tz whitelist as the v2 /message path (#373).
+    # Threaded via StreamState.user_tz to the casual reply, the
+    # advisor panel, and the orchestrator base-system clock. Invalid /
+    # absent header → None → env / Toronto fallback downstream.
+    # (Moved here from the old inline head when p1a extracted the
+    # pre-flight into _chat_stream_run_preflight — _user_tz is read
+    # below at the StreamState(...) construction.)
+    try:
+        from routers.ora_chat import _valid_tz as _valid_tz_stream
+        _user_tz = _valid_tz_stream(request.headers.get("x-client-tz"))
+    except Exception:                                          # noqa: BLE001
+        _user_tz = None
     _r10_turn_t0, user, finalize, interaction_request_id = await _chat_stream_authenticate_and_tag_request(body, authorization)
+    # P1F (ORA audit P3) — [project_id, session_id] ownership guard at
+    # the router boundary, immediately after auth and before the mock
+    # short-circuit / scope-resume / retry-replay branches: a
+    # client-supplied session_id bound to another project is rejected
+    # (403) instead of having this turn appended to that project's
+    # session. Also covers the Ask Advisor panel (ora_panel /
+    # agent="ora") and scope-resume, which branch off this handler
+    # below. A session with no row yet is a freshly client-minted id
+    # and passes (first persist binds it) — see session_guard.py.
+    from .session_guard import assert_session_belongs_to_project
+    await assert_session_belongs_to_project(
+        get_db(), session_id=body.session_id,
+        project_id=body.project_id, user_id=user["user_id"],
+    )
     # Overnight loop W2 Step 2 (2026-08-29) — MOCK_LLM short-circuit,
     # BEFORE any provider routing/tool/repo-context construction. The
     # live main-chat path (this function) was the one surface
@@ -631,97 +959,23 @@ async def chat_stream(
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
                          "Connection": "keep-alive"},
             )
-    # Iter 364 · Phase 3 · Token hard-stop enforcement (streaming path).
-    # Same as /chat/send — refuse the request before spending any LLM
-    # tokens when the wallet is empty or the monthly task cap is blown.
-    # 2026-09 · D3 freemium fix — the task/fix-ship monthly cap is now
-    # gated INSIDE resolve_pre_llm (only fires for an actual agentic
-    # fix/ship attempt, never plain chat). Only the token budget is
-    # checked unconditionally here — "chat is unlimited, token-capped
-    # only" per founder decision.
-    from services.usage import assert_has_budget
-    await assert_has_budget(user["user_id"])
-    # Iter 212m-49 — clear stale LLM provenance from a previous turn
-    # in the same worker so the SSE `done` frame for THIS turn only
-    # reflects what we actually hit this request.
-    _is_founder = await _chat_stream_check_injection_and_founder(body, user, request)
-    # Iter 212m-181 — Loop Mode gate. This used to hardcode "founder
-    # only" here (stale since 2026-08-21's Pro/Team rollout — see
-    # services/loop_beta.py), which silently downgraded execution_mode
-    # to "prompt" for every real Pro/Team customer hitting this stream
-    # path (continuation/fallback turns), even though the dedicated
-    # /loop/start kick-off endpoint had already been unlocked for them.
-    # loop_beta.is_user_allowed() is now the single source of truth for
-    # tier eligibility on both entry points so they can't drift apart
-    # again. Concurrency cap / wall-clock budget / stuck-loop auto-trip
-    # live entirely in loop_engine and are unaffected either way. The
-    # kill-switch is checked explicitly below (is_user_allowed() only
-    # answers "is this tier eligible", not "is loop globally off") so
-    # flipping it also stops the [STEP X/5] contract from being
-    # injected into continuation turns, not just new /loop/start calls.
-    await _chat_stream_handle_loop_mode(body, user)
-
-    jwt_token, user_id, _pg_time, _pg_t0, _db_bc, _pid_stream, bin_ctx = await _chat_stream_setup_stream_context(authorization, user, body)
-    bin_ctx = await _chat_stream_setup_project_context(_pid_stream, user_id, _db_bc, user, _r10_turn_t0, bin_ctx)
-
-    # Iter 212m-139 — Ask Advisor "No repo connected" bug fix.
-    # Iter 212m-141 — Hardened to filter by ACTUAL GitHub reachability.
-    #
-    # When the frontend hasn't yet stamped an active-project tab (e.g.
-    # the user has exactly one connected repo and never had to click a
-    # tab to switch), `body.project_id` arrives as null/empty. Every
-    # downstream tool (`read_repo_files`, `get_repo_structure`, etc.)
-    # then hits `_resolve_project(..., project_id=None)` and returns
-    # "No project connected", which the LLM faithfully reports back as
-    # "no repo is connected right now" — even though the user has one
-    # Iter 212m-169 — BINContext hardening: the SILENT auto-infer at
-    # this entry point is REMOVED.  When `body.project_id` is
-    # blank/"home" we simply do NOT build a bin_ctx; the caller either
-    # explicitly picked a project (bin_ctx built and validated below)
-    # or they are on the Home casual-chat surface (no repo tools —
-    # the tool dispatch layer refuses cleanly).
-    #
-    # No more silent "one project fits all" heuristic that could
-    # mis-route a chat about Project 1 into Project 2's PAT.  The FE
-    # is responsible for stamping the active project_id on every turn.
-
-    # Iter 38: ORA is founder-only. The ORA API key is shared across all
-    # founders, so we gate at the surface to avoid customer quota burn.
-    # Iter 205 — The Ask Advisor side panel (ORASidePanel) hardcodes
-    # `agent="ora"` for every user. Instead of 403'ing free-tier users
-    # (breaking Ask Advisor entirely), silently downgrade to the default
-    # orchestrator so they get Claude/DeepSeek from their own quota.
-    await _chat_stream_setup_ora_agent(body, user)
-
-    # Iter 157 — COLD START FIX.
-    # Three context-builders below used to run sequentially with NO
-    # outer timeout:
-    #   - get_repo_context()  → 5-15 GitHub API calls (worst case 15-45s)
-    #   - get_brain_context() → Mongo read + optional GH PAT call (1-5s)
-    #   - build_url_context() → external URL scrape (1-10s)
-    #
-    # On a fresh chat session against a real repo the wall-clock for
-    # JUST the context build was hitting 30-60s BEFORE the LLM was
-    # even invoked, which fed the 300s "thinking…" stalls users were
-    # reporting on production.
-    #
-    # Fix:
-    #   1. Run all three IN PARALLEL via asyncio.gather.
-    #   2. Wrap each in asyncio.wait_for(timeout=12s). If a builder
-    #      misses the budget we degrade with an empty string — the
-    #      orchestrator still has the persona + local tools and the
-    #      LLM can call read_repo_file itself.
-    #   3. Total upper bound for the context phase: 12s (not 60s+).
-    _safe = await _chat_stream_define_safe()
-
-    # Iter 212m-23 — URL fetching is NO LONGER done eagerly here.
-    # The orchestrator force-invokes `fetch_url` tool when the prompt
-    # contains an http(s) URL (see services/orchestrator.py forced
-    # URL pre-fetch block). This routes URL content through the
-    # standard tool-invocation pipeline so users see a 📖 Reading URL…
-    # step card and a 🌐 web_sources chip — no more silent context
-    # stuffing that bypassed the tool UI.
-    repo_ctx, url_ctx = await _chat_stream_prepare_repo_context(_r10_turn_t0, _safe, user_id, body)
+    # P1/L1 — the whole pre-flight (sync setups + wave 1 + loop-mode +
+    # ora-agent + wave 2) lives in _chat_stream_run_preflight, so the
+    # concurrency is unit-testable; ordering constraints are in its
+    # docstring + the comment block inside it.
+    _pre = await _chat_stream_run_preflight(body, user, request, authorization, _r10_turn_t0)
+    jwt_token = _pre["jwt_token"]
+    user_id = _pre["user_id"]
+    _pg_time = _pre["pg_time"]
+    _pg_t0 = _pre["pg_t0"]
+    _pid_stream = _pre["pid_stream"]
+    bin_ctx = _pre["bin_ctx"]
+    _is_founder = _pre["is_founder"]
+    repo_ctx = _pre["repo_ctx"]
+    url_ctx = _pre["url_ctx"]
+    brain_ctx = _pre["brain_ctx"]
+    _clarify_text = _pre["clarify_text"]
+    _safe = _pre["safe"]
 
     # ── Iter 212m-26 — Auto-ship-shortcut REMOVED ─────────────────────
     # Previously this point invoked `_maybe_ship_shortcut(...)` which
@@ -734,15 +988,6 @@ async def chat_stream(
     # same keyword detection and is also gone. Shipping now ONLY
     # happens when the user explicitly clicks the button. Short
     # conversational replies flow into the normal orchestrator.
-
-    # Iter 172 — independent guard: if the most recent assistant
-    # handoff was a shell command, intercept ANY short follow-up
-    # before it stalls the orchestrator. (Still active — this is
-    # orthogonal to the auto-ship behaviour.)
-    # Iter 212m-177 — P1-6: hard 10s cap. This Mongo lookup ran
-    # unbounded before the stream starts; any stall here = zero-frame
-    # hang until the proxy kills the connection (~125s on PROD).
-    _clarify_text = await _chat_stream_guard_shell_handoff(body, user_id)
 
     if _clarify_text is not None:
         async def _clarify_stream():
@@ -783,7 +1028,6 @@ async def chat_stream(
     # only the CTO worker used the brain — chat never read it, which is
     # why users kept getting "I don't know about that feature" replies
     # for things AUREM itself had committed minutes earlier.
-    brain_ctx = ""
     brain_ctx, extra_sys, _council_recalled, _council_block, _recall_mode, _r10_council_t0 = await _chat_stream_prepare_project_council_context(body, user_id, _safe, repo_ctx, url_ctx, brain_ctx)
     _recall_mode, _council_block, _council_recalled, extra_sys = await _chat_stream_setup_ora_panel(body, user, extra_sys, _recall_mode, _council_block, _council_recalled)
     _plain_english_active, extra_sys = await _chat_stream_setup_plain_english_panel(_r10_council_t0, _recall_mode, _council_recalled, user, extra_sys, body, user_id)
@@ -817,7 +1061,7 @@ async def chat_stream(
         state = StreamState(
             request=request, body=body, authorization=authorization,
             user=user, user_id=user_id, jwt_token=jwt_token,
-            pid_stream=_pid_stream,
+            pid_stream=_pid_stream, user_tz=_user_tz,
             bin_ctx=bin_ctx, repo_ctx=repo_ctx, brain_ctx=brain_ctx,
             extra_sys=extra_sys, council_recalled=_council_recalled,
             council_block=_council_block, recall_mode=_recall_mode,
@@ -967,8 +1211,36 @@ async def chat_stream(
                 raise
             if not state.zero_tool_timeout_suppressed:
                 break  # normal outcome, or the final (non-suppressed) attempt
-            # Attempt 0 silently ate a zero-tool-call timeout. watchdog.py
-            # already issued worker_t.cancel()/ticker_t.cancel() — but
+            # P1 L7 — the zero-tool-call timeout on attempt 0 used to
+            # be SILENT: the user waited out the soft budget (~48 s)
+            # seeing nothing, and the turn then re-ran from scratch
+            # (up to the 180 s hard budget) with no signal — the
+            # 48 s→96 s+ double-timeout cascade. Surface it instead:
+            # yield a visible retry notice BEFORE resetting state, so
+            # the UI can show "timed out before starting — retrying
+            # once", and mark the state so that if attempt 1 ALSO
+            # times out, watchdog.py's terminal `done` payload reports
+            # `timeout_retry_exhausted: true` (retry already spent —
+            # terminal/paused, manual Retry) instead of looking like
+            # a first-attempt timeout. The retry itself stays bounded
+            # to exactly one attempt; only its silence is removed.
+            yield (
+                "data: " + json.dumps({
+                    "type": "notice",
+                    "code": "provider_timeout_retry",
+                    "message": (
+                        "The model timed out before it started — "
+                        "retrying once…"
+                    ),
+                    "retry_attempt": 1,
+                    "max_attempts": 2,
+                    "waited_s": round(_t.monotonic() - state.t_start, 1),
+                }) + "\n\n"
+            )
+            state.timeout_retried = True
+            # Attempt 0's zero-tool-call timeout was suppressed (notice
+            # yielded above). watchdog.py already issued
+            # worker_t.cancel()/ticker_t.cancel() — but
             # .cancel() only SCHEDULES the CancelledError; the task may
             # not have actually stopped touching `state` yet. MUST wait
             # for both to fully settle before reusing `state` for a
@@ -1142,7 +1414,13 @@ async def chat_stream(
                 "ship_suppressed": state.ship_suppressed}
         yield f"data: {json.dumps(meta)}\n\n"
 
-        CHUNK = 6
+        # P1/L2 — the token loop below used to re-slice the finished
+        # reply into 6-char frames with a 12 ms sleep between them
+        # (~2 ms/char of pure pacing delay AFTER the model finished).
+        # It now yields `_emit_content_tokens` frames (512 chars, no
+        # sleep) as fast as the transport allows. The mid-stream-drop
+        # try/finally is unchanged: `i` still counts emitted chars
+        # so a torn-down stream persists exactly what the user saw.
         i = 0
         # 2026-09-08 — Turn-Completion Contract, Section 5 (stream
         # state persistence). Before this fix, a genuine mid-stream
@@ -1156,11 +1434,9 @@ async def chat_stream(
         # way by GeneratorExit/CancelledError on a real client drop.
         _mid_stream_dropped = False
         try:
-            while i < len(content):
-                chunk = content[i:i + CHUNK]
+            async for chunk in _emit_content_tokens(content):
                 yield f"data: {json.dumps({'token': chunk})}\n\n"
-                i += CHUNK
-                await asyncio.sleep(0.012)
+                i += len(chunk)
         except (asyncio.CancelledError, GeneratorExit):
             _mid_stream_dropped = i < len(content)
             raise

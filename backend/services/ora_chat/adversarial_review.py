@@ -11,6 +11,15 @@ hallucinated = flag dropped + logged to `ora_reviewer_errors`.
 
 Budget guard: within $0.50 of daily cap → skip review (logged), never
 block the response. Metrics per reviewed turn → `ora_review_log`.
+
+Part XII (c1): a skipped / errored review now returns `"passed":
+False`, not `True`. The old shared default said `passed: True` on
+every skip/error path, conflating "not reviewed" with "reviewed and
+clean" — any caller trusting `passed` got a false pass. Skipping
+still never blocks the response itself; it just no longer reports a
+pass that never happened. (No live production caller branches on
+`passed` today — canary keys on `flags`/`skipped` — so this is a
+latent fail-open closed at the API level.)
 """
 from __future__ import annotations
 
@@ -168,7 +177,7 @@ async def run_review(*, user_id: str, session_id: str, query: str,
      skipped, passed}"""
     empty = {"flags": [], "hard": [], "soft": [], "dropped": 0,
              "latency_s": 0.0, "usage": {}, "cost_usd": 0.0,
-             "skipped": None, "passed": True}
+             "skipped": None, "passed": False}
     if not (draft or "").strip():
         return {**empty, "skipped": "empty_draft"}
 

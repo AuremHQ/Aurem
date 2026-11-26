@@ -20,7 +20,9 @@ from pydantic import BaseModel
 
 from cto_services.auth import (
     create_token, current_dev, create_mfa_pending_token,
-    consume_mfa_pending_token,
+    consume_mfa_pending_token, require_admin,
+    create_context_bridge_token, CONTEXT_BRIDGE_SCOPE,
+    CONTEXT_BRIDGE_TOKEN_TTL_S,
 )
 from cto_services.db import get_db
 from services.usage import is_founder_email
@@ -576,6 +578,62 @@ async def login_2fa_verify(body: TwoFAVerifyBody) -> dict:
     # claim. The leg-1/leg-2-disabled branch above does NOT verify
     # anything and correctly keeps the default `mfa_verified=False`.
     return _issue_session(user, is_admin, is_founder, mfa_verified=True)
+
+
+# ── Part VII fix 4(b) — mint a short-lived context-bridge token ──────
+# The browser extension used to send its full 7-day session JWT to
+# POST /admin/ora/context-bridge. That endpoint now accepts ONLY a
+# 15-minute `scope: "context_bridge"` token (see
+# `cto_services.auth.require_context_bridge_token`), minted here from
+# a valid session JWT. Admin-only via `require_admin` — the same gate
+# the bridge endpoint itself sits behind — so a non-admin session can
+# never mint one. Note for team-member admins: `require_admin` needs
+# a route-registry entry for this route, and none exists yet, so in
+# practice minting is Owner-only today (the extension's only user is
+# the founder); a registry entry is the follow-up if team members
+# ever need the bridge. The minted token preserves the session's
+# `mfa` claim and is bound to the session's jti/iat, so logout and
+# revoke-all-sessions kill it too (see `create_context_bridge_token`).
+@router.post("/context-bridge-token")
+async def mint_context_bridge_token(
+    request: Request, authorization: Optional[str] = Header(None)
+) -> dict:
+    """Trade a valid admin session JWT for a 15-minute
+    `scope: "context_bridge"` token. The session JWT itself is NOT
+    accepted by the bridge endpoint any more."""
+    user = await require_admin(authorization, request)
+    if (
+        user.get("mfa_pending")
+        or user.get("link_token")
+        or user.get("scope") == CONTEXT_BRIDGE_SCOPE
+    ):
+        raise HTTPException(
+            401, "A session token is required to mint a context-bridge token"
+        )
+    session_jti = user.get("jti")
+    session_iat = user.get("iat")
+    if not session_jti or session_iat is None:
+        # Pre-Iter-212m-55 session tokens carry no jti/iat; the bridge
+        # token must bind to a parent session, so these cannot mint.
+        # /auth/me re-signs with jti/iat — sign in again (or hit /me)
+        # and minting works.
+        raise HTTPException(
+            401,
+            "Session token is too old to mint a context-bridge token — sign in again",
+        )
+    token = create_context_bridge_token(
+        user["user_id"],
+        user["email"],
+        session_jti,
+        session_iat,
+        is_admin=bool(user.get("is_admin")),
+        mfa_verified=bool(user.get("mfa")),
+    )
+    return {
+        "token": token,
+        "scope": CONTEXT_BRIDGE_SCOPE,
+        "expires_in": CONTEXT_BRIDGE_TOKEN_TTL_S,
+    }
 
 
 # ── 2026-08-19 SECURITY FOLLOW-UP — self-service password reset ────────

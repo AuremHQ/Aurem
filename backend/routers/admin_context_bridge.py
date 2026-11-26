@@ -13,6 +13,10 @@ other chat turn is written through (`routers/chat/turn.py`, `stream.py`,
 Security:
   - Admin/founder only (`require_admin_dep`, same gate every other
     admin router uses).
+  - Part VII fix 4(b): the endpoint accepts ONLY a short-lived
+    (15-minute) `scope: "context_bridge"` token minted at
+    POST /auth/context-bridge-token — a full 7-day session JWT is
+    rejected here (401), even for admins.
   - The extension does its own sanitization before dispatch (per its
     own `src/sanitize.ts`) — this is a SECOND, independent pass,
     defense-in-depth, in case a future extension build/bug skips it.
@@ -30,7 +34,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from cto_services.auth import current_dev, require_admin_dep
+from cto_services.auth import require_admin_dep, require_context_bridge_token
 from cto_services.db import get_db
 from services.chat_helpers import _persist_turn
 
@@ -114,7 +118,15 @@ async def receive_context_bridge(
     payload: ContextBridgePayload,
     authorization: Optional[str] = Header(None),
 ) -> dict:
-    user = await current_dev(authorization)
+    # Part VII fix 4(b) — this endpoint accepts ONLY a short-lived
+    # `scope: "context_bridge"` token (15 min, minted at
+    # POST /auth/context-bridge-token). A full 7-day session JWT is
+    # rejected here with 401 even though it passes the router-level
+    # admin gate above — the gate proves "admin", the scope check
+    # proves "this token was minted for the bridge and nothing else".
+    # `require_context_bridge_token` also re-checks the parent
+    # session's revocation/barrier, so logout kills bridge tokens.
+    user = await require_context_bridge_token(authorization)
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database unavailable")

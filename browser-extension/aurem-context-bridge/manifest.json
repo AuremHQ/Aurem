@@ -11,6 +11,17 @@
   "host_permissions": [
     "https://auremcto.com/*"
   ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://auremcto.com/*"],
+      "js": ["src/content-ring-buffer.js"],
+      "run_at": "document_start"
+    }
+  ],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
