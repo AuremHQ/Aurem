@@ -1,9 +1,15 @@
 """NOTE 2026-11-25 (ora-fix): the four tests that documented the bugs
-(test_live_turn_system_prompt_*, test_runtime_context_default_*,
-test_latest_user_message_is_sent_twice,
-test_history_is_capped_at_12_turns_*) were flipped in place — same
-names, same coverage — to assert the FIXED behaviour. No test was
-deleted, skipped, or weakened.
+were flipped in place — same coverage — to assert the FIXED behaviour,
+and renamed 2026-11-26 so their names match what they assert (old names
+in parentheses):
+- test_live_turn_system_prompt_has_today_line_and_runtime_context
+  (was ..._has_no_runtime_context_only_state_as_of)
+- test_runtime_context_default_timezone_is_toronto_not_kolkata
+  (was ..._is_kolkata_not_toronto)
+- test_latest_user_message_is_sent_once (was ..._is_sent_twice)
+- test_history_survives_full_tail_with_rolling_summary
+  (was ..._is_capped_at_12_turns_with_no_summary)
+No test was deleted, skipped, or weakened.
 
 Agent 2 repro — Ora reports the WRONG current time/date (2026-11-25).
 
@@ -118,7 +124,7 @@ def test_v2_system_prompt_contains_no_current_date_or_time():
         assert needle not in SYSTEM_PROMPT, needle
 
 
-def test_live_turn_system_prompt_has_no_runtime_context_only_state_as_of():
+def test_live_turn_system_prompt_has_today_line_and_runtime_context():
     """FIXED 2026-11-25 (F1/F2): a live run_turn now prepends a
     server-side "Today is ..." Toronto date line + the Runtime context
     block to the model-bound system prompt, and the current message is
@@ -138,7 +144,7 @@ def test_live_turn_system_prompt_has_no_runtime_context_only_state_as_of():
     assert "state_as_of:" in system
 
 
-def test_runtime_context_default_timezone_is_kolkata_not_toronto():
+def test_runtime_context_default_timezone_is_toronto_not_kolkata():
     """FIXED 2026-11-25 (F1): the default timezone is now
     America/Toronto (safety.py), so in a Toronto evening the context
     reports Toronto's date — not tomorrow's Kolkata date."""
@@ -164,7 +170,7 @@ def test_runtime_context_with_toronto_gives_right_date():
     assert "now_toronto" in ctx
 
 
-def test_latest_user_message_is_sent_twice():
+def test_latest_user_message_is_sent_once():
     """FIXED 2026-11-25 (F2): the router persists the message then
     re-fetches the session, but the engine now drops the trailing
     duplicate — the payload ends with the current message ONCE."""
@@ -177,7 +183,7 @@ def test_latest_user_message_is_sent_twice():
     assert [m["content"] for m in users] == ["what time is it right now?"]
 
 
-def test_history_is_capped_at_12_turns_with_no_summary():
+def test_history_survives_full_tail_with_rolling_summary():
     """FIXED 2026-11-25 (F8): history is routed through the
     rolling-summary builder — a short session is preserved whole
     (no 12-turn cut), and the engine source wires in
