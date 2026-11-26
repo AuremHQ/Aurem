@@ -118,7 +118,11 @@ export default function AdminHarnessReleases() {
       toast({ message: cleanErr(e, "Failed to load releases"), kind: "error" });
     }
     try {
-      const res = await fetch(`${PUBLIC_BASE}/harness/release-status`);
+      // Guard 18 · Nov 2026 — timeout signal so the fetch cannot
+      // hang forever (public status check, 30s is ample).
+      const res = await fetch(`${PUBLIC_BASE}/harness/release-status`, {
+        signal: AbortSignal.timeout(30_000),
+      });
       setLive(await res.json());
     } catch {
       setLive(null);

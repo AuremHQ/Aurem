@@ -927,6 +927,9 @@ function ChatShell({ onLogout }) {
           headers: { "Content-Type": "application/json",
                        "Authorization": `Bearer ${getToken()}` },
           body: JSON.stringify({ proposal_id: proposal.proposal_id }),
+          // Guard 18 · Nov 2026 — timeout signal so the fetch cannot
+          // hang forever (matches the other POSTs in this file).
+          signal: AbortSignal.timeout(60_000),
         });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.ok === false) {
