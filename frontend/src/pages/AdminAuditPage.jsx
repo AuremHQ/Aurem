@@ -20,8 +20,15 @@
  * action-specific (installation_ids, reason, before→after, …) moved
  * into the row's expand panel.
  */
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { api } from "../lib/api";
+
+// Part XV — live updates: both tabs poll every 30 s (same interval as
+// AdminCockpit's POLL_MS and the Admin.jsx supervised-tasks tile), so a
+// new audit row appears without clicking Refresh. The manual Refresh
+// buttons are kept. Polls are quiet (no loading flash); mount and
+// manual refresh still show the loading state.
+const AUDIT_POLL_MS = 30000;
 
 function AdminActionsTab() {
   const [rows, setRows] = useState([]);
@@ -29,21 +36,27 @@ function AdminActionsTab() {
   const [expanded, setExpanded] = useState(null);
   const [err, setErr] = useState("");
 
-  async function load() {
-    setLoading(true); setErr("");
+  async function load(quiet = false) {
+    if (!quiet) { setLoading(true); }
+    setErr("");
     try {
       const r = await api.get("/admin/audit/actions?limit=100");
       setRows(r.data?.rows || []);
     } catch (e) {
       setErr(e?.response?.data?.detail?.message || e?.response?.data?.detail || e.message || "Failed to load admin actions");
-    } finally { setLoading(false); }
+    } finally { if (!quiet) setLoading(false); }
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const t = setInterval(() => load(true), AUDIT_POLL_MS);
+    return () => clearInterval(t);
+  }, []);
 
   return (
     <div data-testid="admin-audit-actions-tab">
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
-        <button onClick={load} data-testid="admin-audit-actions-refresh"
+        <button onClick={() => load()} data-testid="admin-audit-actions-refresh"
+                title="Refresh now (auto-refreshes every 30 s)"
                 className="btn-ghost" style={{ fontSize: 11 }}>
           Refresh
         </button>
@@ -145,10 +158,15 @@ export default function AdminAuditPage() {
   const [expanded, setExpanded] = useState(null);
   const [err, setErr] = useState("");
   const [signalsOnly, setSignalsOnly] = useState(false);
+  // Ref mirror of signalsOnly so the poll interval always fetches with
+  // the current filter without re-creating the interval on every toggle.
+  const signalsOnlyRef = useRef(false);
+  useEffect(() => { signalsOnlyRef.current = signalsOnly; }, [signalsOnly]);
 
-  async function load(signalsOnlyOverride) {
+  async function load(signalsOnlyOverride, quiet = false) {
     const wantSignalsOnly = signalsOnlyOverride ?? signalsOnly;
-    setLoading(true); setErr("");
+    if (!quiet) { setLoading(true); }
+    setErr("");
     try {
       const r = await api.get(
         `/admin/audit?limit=100&signals_only=${wantSignalsOnly ? "true" : "false"}`
@@ -156,9 +174,17 @@ export default function AdminAuditPage() {
       setRows(r.data?.rows || []);
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message || "Failed to load audit feed");
-    } finally { setLoading(false); }
+    } finally { if (!quiet) setLoading(false); }
   }
-  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Poll only while the turns sub-tab is visible; switching to the
+  // actions sub-tab unmounts that tab's own poller and pauses this one
+  // (the effect re-runs on sub change and reloads on the way back).
+  useEffect(() => {
+    if (sub !== "turns") return undefined;
+    load();
+    const t = setInterval(() => load(signalsOnlyRef.current, true), AUDIT_POLL_MS);
+    return () => clearInterval(t);
+  }, [sub]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggleSignalsOnly() {
     const next = !signalsOnly;
@@ -210,6 +236,7 @@ export default function AdminAuditPage() {
               ⚠ Signals only
             </label>
             <button onClick={() => load()} data-testid="admin-audit-refresh"
+                    title="Refresh now (auto-refreshes every 30 s)"
                     className="btn-ghost" style={{ fontSize: 11 }}>
               Refresh
             </button>

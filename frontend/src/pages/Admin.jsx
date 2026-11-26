@@ -17,7 +17,9 @@ import { api, getCachedAdminAccess, fetchMyAdminAccess, isAdminOrFounder } from 
 import AdminSelfBugs from "./AdminSelfBugs";              // Item 3 (2026-08-31)
 import { toast } from "../components/Toast";
 import { buildGroupedAdminNav, visibleAdminNav } from "../lib/adminNav";
-import AuremAdminPanel from "../components/AuremAdminPanel";
+// Part XV — AuremAdminPanel was an unused import here (never rendered
+// in this file); its live home is AdminSettingsPage.jsx, where it is
+// embedded under the "ORA Council" section. Import removed.
 import OraChatDrawer from "../components/OraChatDrawer";        // Iter 212m-238
 import NotificationBell from "../components/NotificationBell";   // Feb 2026 · cockpit bell
 import AdminOverview from "./AdminOverview";

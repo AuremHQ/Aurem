@@ -18,11 +18,16 @@
  */
 import { api, API_BASE } from "./api";
 
-export async function startLoop({ projectId, userMessage, sessionId }) {
+export async function startLoop({ projectId, userMessage, sessionId, mode }) {
   const r = await api.post("/loop/start", {
     project_id:   projectId || null,
     user_message: userMessage,
     session_id:   sessionId || null,
+    // Part XIII · 2(a) — thread the chat review mode (swift / pro /
+    // maxx) through to the backend StartBody so the loop runs under
+    // the same mode the user picked. Omitted (null) when the caller
+    // passes none — the backend then runs the full Council as today.
+    mode:         mode || null,
   });
   return r?.data || r;
 }
@@ -78,10 +83,22 @@ export async function getLoopStatus(loopId) {
 // carries the correct payload. Returns {ok, loop_id, rollback_status,
 // commit_sha}; rollback runs as a background task, caller polls
 // /loop/{id}/status for rollback_status/rollback_sha updates.
-export async function rollbackLoop(loopId) {
+//
+// Part XIII · 1 — drift-acknowledge rollback. When the branch moved
+// since the ship landed, the backend answers HTTP 200 {ok: false,
+// rollback_status: "drift_detected"} and attempts NOTHING until the
+// caller resends with acknowledge_drift: true. Pass
+// { acknowledgeDrift: true } on the confirmed retry; { force: true }
+// re-uses the same path for a previous rollback that failed with an
+// UNCONFIRMED candidate revert commit (backend `force` flag).
+export async function rollbackLoop(loopId, opts = {}) {
   const r = await api.post(
     `/loop/${encodeURIComponent(loopId)}/rollback`,
-    { confirm: "ROLLBACK" },
+    {
+      confirm: "ROLLBACK",
+      ...(opts.acknowledgeDrift ? { acknowledge_drift: true } : {}),
+      ...(opts.force ? { force: true } : {}),
+    },
   );
   return r?.data || r;
 }
