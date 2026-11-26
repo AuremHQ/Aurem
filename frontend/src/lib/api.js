@@ -160,7 +160,29 @@ const _TASK_DETAIL_RX   = /^\/cto\/tasks\/[^/?]+\/?$/;
 const _PROJECTS_LIST_RX = /^\/cto\/projects\/list\/?$/;
 const _TASK_CACHE_TTL_MS     = 1500;
 const _PROJECTS_CACHE_TTL_MS = 2000;
-const _taskGetCache = new Map(); // url -> { ts, promise }
+const _taskGetCache = new Map(); // cacheKey -> { ts, promise }
+
+// P0 audit fix (claim #5) — fold config.params into the dedup key.
+// axios serialises `params` into the query string at request time,
+// so two calls to the same url with different params used to share
+// one cache entry and the second caller got the first caller's
+// response. Keys are sorted so {a:1,b:2} and {b:2,a:1} still
+// coalesce; undefined values are skipped, matching axios (it drops
+// them from the query string instead of sending `k=`).
+function _dedupKey(url, config) {
+  const params = config?.params;
+  if (!params || typeof params !== "object") return url;
+  const parts = [];
+  for (const k of Object.keys(params).sort()) {
+    const v = params[k];
+    if (v === undefined) continue;
+    parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(
+      typeof v === "object" ? JSON.stringify(v) : String(v),
+    )}`);
+  }
+  if (parts.length === 0) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}${parts.join("&")}`;
+}
 
 function _ttlFor(path) {
   if (_TASK_DETAIL_RX.test(path))   return _TASK_CACHE_TTL_MS;
@@ -174,18 +196,22 @@ api.get = function dedupedGet(url, config) {
     const path = url.split("?")[0];
     const ttl  = _ttlFor(path);
     if (ttl > 0) {
-      // Key on full url incl. query so different `?fields=` calls don't collide
-      const cached = _taskGetCache.get(url);
+      // Key on full url incl. query so different `?fields=` calls don't collide.
+      // P0 (claim #5) — config.params are folded into the key too
+      // (see _dedupKey): without this, two calls with different
+      // params shared one cache entry.
+      const cacheKey = _dedupKey(url, config);
+      const cached = _taskGetCache.get(cacheKey);
       const now = Date.now();
       if (cached && now - cached.ts < ttl) {
         return cached.promise;
       }
       const promise = _origApiGet(url, config).catch((err) => {
         // Evict on failure so the next caller actually retries.
-        _taskGetCache.delete(url);
+        _taskGetCache.delete(cacheKey);
         throw err;
       });
-      _taskGetCache.set(url, { ts: now, promise });
+      _taskGetCache.set(cacheKey, { ts: now, promise });
       return promise;
     }
   }

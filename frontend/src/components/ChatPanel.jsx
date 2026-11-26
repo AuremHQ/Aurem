@@ -1793,9 +1793,38 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // mount even when the user just wanted to chat. Preview now opens only
   // via explicit user action (Preview tab / inline button).
 
+  // P0 audit fix (extra #1) — previous session id seen by the
+  // history effect below. Lets it distinguish a switch to a different
+  // session (clear stale messages) from a remount of the same one
+  // (preserve). See the effect for the full reasoning.
+  const prevHistorySessionIdRef = useRef(null);
+
   // Load history on session change
   useEffect(() => {
-    if (!sessionId) return;
+    // P0 audit fix (extra #1) — when Shell clears the session id on
+    // a project switch (see Shell.jsx claim #1), sessionId goes null
+    // before the new session resolves. Blank the messages then, so
+    // the previous session's turns never sit visible under the new
+    // project's header during the (up to 3 s) resolution window.
+    // A null on first mount leaves the initial [WELCOME] alone.
+    if (!sessionId) {
+      if (prevHistorySessionIdRef.current !== null) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setMessages([]);
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setLoadingHistory(true);
+      }
+      prevHistorySessionIdRef.current = null;
+      return;
+    }
+    // P0 audit fix (extra #1) — remember whether this run is a
+    // switch to a DIFFERENT session (project switch / new chat /
+    // opening another session) as opposed to a remount of the same
+    // one, so the error path below can tell "messages on screen
+    // belong to the previous session" from "they belong to this one".
+    const historySessionSwitched = prevHistorySessionIdRef.current !== null
+      && prevHistorySessionIdRef.current !== sessionId;
+    prevHistorySessionIdRef.current = sessionId;
     let cancelled = false;
       // Minor 13 - stale-while-revalidate: paint the cached turns for
       // this session immediately (repeat dashboard visits) instead of
@@ -1814,6 +1843,16 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       if (!paintedFromCache) {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setLoadingHistory(true);
+        // P0 audit fix (extra #1) — on a real session switch with no
+        // cached turns for the NEW session, drop the previous
+        // session's messages NOW instead of leaving them visible
+        // under the new project's header while the fetch is in
+        // flight. (Same-session remounts keep the initial [WELCOME]
+        // — only a switch clears.)
+        if (historySessionSwitched) {
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setMessages([]);
+        }
       }
     api
       .get(`/chat/history`, { params: { session_id: sessionId } })
@@ -1877,6 +1916,20 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         // now, silent preservation matches the "never lose visible
         // data on a network hiccup" invariant.
         if (cancelled) return;
+        // P0 audit fix (extra #1) — on error with no cache paint,
+        // the messages on screen still belong to the PREVIOUS session
+        // (this session's own cached turns would have been painted
+        // above, and a same-session remount only ever shows the
+        // initial [WELCOME]). Clear them instead of preserving, so a
+        // failed history fetch after a project switch never leaves
+        // the old project's conversation under the new header. The
+        // Iter 330 preserve rule still holds for the case it was
+        // written for: cached turns for THIS session are preserved
+        // (paintedFromCache is true, so this branch is skipped).
+        if (!paintedFromCache) {
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setMessages([WELCOME]);
+        }
         // Console-only diagnostic so we can spot this in production
         // logs if it starts happening. Not user-visible.
         try {
@@ -2680,12 +2733,37 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           readyAttachments.length > 1 ? "s" : ""}: ${
           readyAttachments.map((a) => a.name).join(", ")}*`
       : text;
+    // P0 audit fix (claim #7) — per-turn bubble id. Every stream
+    // callback in runTurn() below must update THIS turn's assistant
+    // bubble by id, never positionally (copy[copy.length - 1]): a
+    // late frame from an aborted/retried stream used to land on
+    // whatever assistant bubble was last. A retry reuses the same
+    // bubble (performRetry resets it in place), so the id stays
+    // valid across runTurn() re-invocations of this send().
+    const turnBubbleId = (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `turn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    // P0 audit fix (claim #7) — UUID-matched bubble update for this
+    // turn's stream callbacks. Finds the bubble by its per-turn id;
+    // a missing bubble (purged by a project switch) or a failed
+    // guard leaves messages untouched instead of mutating the last
+    // message. `guard` is the callback's original role/streaming
+    // check, kept verbatim except onTaskHandoff (see below).
+    const updateTurnBubble = (msgs, guard, patch) => {
+      const idx = msgs.findIndex((m) => m && m.id === turnBubbleId);
+      if (idx < 0) return msgs;
+      const target = msgs[idx];
+      if (!guard(target)) return msgs;
+      const copy = msgs.slice();
+      copy[idx] = patch(target);
+      return copy;
+    };
     setMessages((m) => [
       ...m,
       ...(opts.skipUserBubble
         ? []
         : [{ role: "user", content: displayContent, ts: Date.now() / 1000 }]),
-      { role: "assistant", content: "", streaming: true, maxxMode, councilRecalled: 0 },
+      { role: "assistant", content: "", streaming: true, maxxMode, councilRecalled: 0, id: turnBubbleId },
     ]);
     setBusy(true);
 
@@ -2836,23 +2914,21 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           // if the previous streaming flag flipped false during the
           // race), so a late-arriving onToken from the aborted stream
           // can't stack on top of the retry's fresh tokens.
-          setMessages((msgs) => {
-            const copy = msgs.slice();
-            const last = copy[copy.length - 1];
-            if (last && last.role === "assistant") {
-              copy[copy.length - 1] = {
-                ...last,
-                content: "",
-                streaming: true,
-                activity: undefined,
-                progressPct: 0,
-                seenActivities: [],
-                invocations: [],
-                steps: [],
-              };
-            }
-            return copy;
-          });
+          // P0 audit fix (claim #7) — id-matched, not positional.
+          // Guard kept verbatim (role-only, so the unconditional
+          // reset above still holds).
+          setMessages((msgs) => updateTurnBubble(msgs,
+            (last) => last.role === "assistant",
+            (last) => ({
+              ...last,
+              content: "",
+              streaming: true,
+              activity: undefined,
+              progressPct: 0,
+              seenActivities: [],
+              invocations: [],
+              steps: [],
+            })));
           setLiveStepCard({ steps: [], provider: null, tokens: 0, visible: true });
           // Fire the retry asynchronously so the current call stack
           // (interval tick or button click) can unwind cleanly.
@@ -2860,19 +2936,15 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         } else {
           // Retry budget exhausted — fail the bubble gracefully.
           setLiveStepCard(null);
-          setMessages((msgs) => {
-            const copy = msgs.slice();
-            const last = copy[copy.length - 1];
-            if (last && last.role === "assistant") {
-              copy[copy.length - 1] = {
-                ...last,
-                content: "⏳ ORA seemed to get stuck. The request was auto-cancelled after 90s of silence. Hit Send again to retry.",
-                error: true,
-                streaming: false,
-              };
-            }
-            return copy;
-          });
+          // P0 audit fix (claim #7) — id-matched, not positional.
+          setMessages((msgs) => updateTurnBubble(msgs,
+            (last) => last.role === "assistant",
+            (last) => ({
+              ...last,
+              content: "⏳ ORA seemed to get stuck. The request was auto-cancelled after 90s of silence. Hit Send again to retry.",
+              error: true,
+              streaming: false,
+            })));
           setBusy(false);
         }
       }
@@ -2923,17 +2995,13 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         // Iter 141 — second real progress milestone. Mode classification
         // has finished, so the orchestrator is now committed to a route
         // (chat / code / debug). Jump to 25%.
-        setMessages((msgs) => {
-          const copy = msgs.slice();
-          const last = copy[copy.length - 1];
-          if (last && last.role === "assistant" && last.streaming) {
-            copy[copy.length - 1] = {
-              ...last,
-              progressPct: Math.max(last.progressPct || 0, 25),
-            };
-          }
-          return copy;
-        });
+        // P0 audit fix (claim #7) — id-matched, not positional.
+        setMessages((msgs) => updateTurnBubble(msgs,
+          (last) => last.role === "assistant" && last.streaming,
+          (last) => ({
+            ...last,
+            progressPct: Math.max(last.progressPct || 0, 25),
+          })));
       },
       onOpsRedirect: (m) => { bumpActivity(); setOpsRedirect(m); },
       // Iter 212m-78 — Council self-learning indicator. Emitted by
@@ -2945,14 +3013,10 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       onCouncil: (n) => {
         bumpActivity();
         if (!n || n <= 0) return;
-        setMessages((msgs) => {
-          const copy = msgs.slice();
-          const last = copy[copy.length - 1];
-          if (last && last.role === "assistant" && last.streaming) {
-            copy[copy.length - 1] = { ...last, councilRecalled: n };
-          }
-          return copy;
-        });
+        // P0 audit fix (claim #7) — id-matched, not positional.
+        setMessages((msgs) => updateTurnBubble(msgs,
+          (last) => last.role === "assistant" && last.streaming,
+          (last) => ({ ...last, councilRecalled: n })));
       },
       // Iter 51 — SSE Task Progress Streamer. Mode D→C (and any auto
       // handoff) emits this BEFORE content streams. Pin the task_id on
@@ -2960,19 +3024,20 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
       // inline and polls live progress — user never has to leave chat.
       onTaskHandoff: (p) => {
         bumpActivity();
-        setMessages((msgs) => {
-          const copy = msgs.slice();
-          const last = copy[copy.length - 1];
-          if (last && last.role === "assistant") {
-            copy[copy.length - 1] = {
-              ...last,
-              shipped_task_id: p.task_id,
-              auto_handoff_project_id: p.project_id || null,
-              auto_handoff_source: p.source || "auto",
-            };
-          }
-          return copy;
-        });
+        // P0 audit fix (claim #7) — id-matched AND the missing
+        // `streaming` guard added: this was the only stream callback
+        // without one, so a late handoff frame after the bubble
+        // finished streaming stamped shipped_task_id onto whatever
+        // assistant message was last, and the onDone handler then
+        // attached that task's edited_files diff to the wrong turn.
+        setMessages((msgs) => updateTurnBubble(msgs,
+          (last) => last.role === "assistant" && last.streaming,
+          (last) => ({
+            ...last,
+            shipped_task_id: p.task_id,
+            auto_handoff_project_id: p.project_id || null,
+            auto_handoff_source: p.source || "auto",
+          })));
         // Iter 114 — open the floating live-status popup for this task
         setLivePopupTaskId(p.task_id || null);
         // Fire a global hook so the right-side <PreviewPane /> can latch
@@ -2999,13 +3064,12 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         if (m && m.provider) {
           setLiveStepCard((cur) => cur ? { ...cur, provider: m.provider } : cur);
         }
-        setMessages((msgs) => {
-          const copy = msgs.slice();
-          const last = copy[copy.length - 1];
-          if (last && last.role === "assistant" && last.streaming) {
-            copy[copy.length - 1] = {
-              ...last,
-              meta: m,
+        // P0 audit fix (claim #7) — id-matched, not positional.
+        setMessages((msgs) => updateTurnBubble(msgs,
+          (last) => last.role === "assistant" && last.streaming,
+          (last) => ({
+            ...last,
+            meta: m,
               progressPct: Math.max(last.progressPct || 0, 15),
               ...(typeof m?.temperature === "number" ? { temperature: m.temperature } : {}),
               ...(m?.mode ? { mode: m.mode } : {}),
@@ -3028,10 +3092,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
               // services/bail_reason.py) so the UI note below can show
               // a concrete reason instead of a generic banned phrase.
               ...(m?.bail_reason ? { bailReason: m.bail_reason } : {}),
-            };
-          }
-          return copy;
-        });
+            })));
       },
       // Iter 35/36: server emits periodic {thinking:true, elapsed_s, activity}
       // frames during the tool-call loop so we can show a live counter +
@@ -3048,15 +3109,10 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           done: !!s.done,
           ts:   Date.now(),
         };
-        setMessages((msgs) => {
-          const copy = msgs.slice();
-          const last = copy[copy.length - 1];
-          if (last && last.role === "assistant" && last.streaming) {
-            const steps = [...(last.steps || []), stepObj];
-            copy[copy.length - 1] = { ...last, steps };
-          }
-          return copy;
-        });
+        // P0 audit fix (claim #7) — id-matched, not positional.
+        setMessages((msgs) => updateTurnBubble(msgs,
+          (last) => last.role === "assistant" && last.streaming,
+          (last) => ({ ...last, steps: [...(last.steps || []), stepObj] })));
         setLiveStepCard((cur) => {
           const steps = [...((cur && cur.steps) || []), stepObj];
           return {
@@ -3097,10 +3153,10 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           }
         } catch { /* ignore */ }
 
-        setMessages((msgs) => {
-          const copy = msgs.slice();
-          const last = copy[copy.length - 1];
-          if (last && last.role === "assistant" && last.streaming) {
+        // P0 audit fix (claim #7) — id-matched, not positional.
+        setMessages((msgs) => updateTurnBubble(msgs,
+          (last) => last.role === "assistant" && last.streaming,
+          (last) => {
             // Iter 141 — real progress. Each new activity advances
             // the bar by 5pp, capped at 50% (the "first-token"
             // milestone). If activity stays the same, the bar
@@ -3109,7 +3165,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
             const isNewActivity = activity && !seen.includes(activity);
             const newSeen = isNewActivity ? [...seen, activity] : seen;
             const stepProgress = Math.min(50, 25 + newSeen.length * 5);
-            copy[copy.length - 1] = {
+            return {
               ...last,
               elapsedS: elapsed,
               seenActivities: newSeen,
@@ -3127,9 +3183,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
               // confusing surprise rather than an expected escalation.
               ...(typeof slowNotice === "boolean" ? { slowNotice } : {}),
             };
-          }
-          return copy;
-        });
+          }));
       },
       onToken: (tok) => {
         bumpActivity();
@@ -3142,10 +3196,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           const added = (tok || "").length;
           return { ...cur, tokens: (cur.tokens || 0) + Math.max(1, Math.round(added / 4)) };
         });
-        setMessages((msgs) => {
-          const copy = msgs.slice();
-          const last = copy[copy.length - 1];
-          if (last && last.role === "assistant") {
+        // P0 audit fix (claim #7) — id-matched, not positional.
+        // Guard kept verbatim (role-only, as before).
+        setMessages((msgs) => updateTurnBubble(msgs,
+          (last) => last.role === "assistant",
+          (last) => {
             // Iter 141 — token-driven progress. Once the first token
             // lands we jump to 55% and then incrementally close on
             // 95% per chunk (asymptotic so we never overshoot before
@@ -3154,47 +3209,43 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
             const gap = 95 - baseline;
             // Each token chunk closes ~5% of the remaining gap.
             const nextPct = Math.min(95, baseline + gap * 0.05);
-            copy[copy.length - 1] = {
+            return {
               ...last,
               content: (last.content || "") + tok,
               progressPct: nextPct,
             };
-          }
-          return copy;
-        });
+          }));
       },
       onWatchdogPending: () => {
         bumpActivity();
-        setMessages((msgs) => {
-          const copy = msgs.slice();
-          const last = copy[copy.length - 1];
-          if (last && last.role === "assistant") {
-            copy[copy.length - 1] = { ...last, watchdogPending: true };
-          }
-          return copy;
-        });
+        // P0 audit fix (claim #7) — id-matched, not positional.
+        // Guard kept verbatim (role-only, as before).
+        setMessages((msgs) => updateTurnBubble(msgs,
+          (last) => last.role === "assistant",
+          (last) => ({ ...last, watchdogPending: true })));
       },
       onWatchdog: (wd) => {
         bumpActivity();
-        setMessages((msgs) => {
-          const copy = msgs.slice();
-          const last = copy[copy.length - 1];
-          if (last && last.role === "assistant") {
-            copy[copy.length - 1] = {
-              ...last, watchdog: wd, watchdogPending: false,
-            };
-          }
-          return copy;
-        });
+        // P0 audit fix (claim #7) — id-matched, not positional.
+        // Guard kept verbatim (role-only, as before).
+        setMessages((msgs) => updateTurnBubble(msgs,
+          (last) => last.role === "assistant",
+          (last) => ({
+            ...last, watchdog: wd, watchdogPending: false,
+          })));
       },
       onScopeConfirmation: (event) => {
         bumpActivity();
         const proposal = event?.proposal;
         if (!proposal?.id) return;
-        setMessages((msgs) => msgs.map((m, i) => i === msgs.length - 1 && m.role === "assistant" ? {
-          ...m, awaitingScopeConfirmation: true, scopeConfirmationProposalId: proposal.id,
-          scopeConfirmationPrompt: proposal.prompt,
-        } : m));
+        // P0 audit fix (claim #7) — id-matched, not positional
+        // (was: last index + role check).
+        setMessages((msgs) => updateTurnBubble(msgs,
+          (m) => m.role === "assistant",
+          (m) => ({
+            ...m, awaitingScopeConfirmation: true, scopeConfirmationProposalId: proposal.id,
+            scopeConfirmationPrompt: proposal.prompt,
+          })));
       },
       onDone: (d) => {
         if (d.scope_execution?.proposal_id) {
@@ -3246,13 +3297,13 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
             visible: true,
           };
         });
-        setMessages((msgs) => {
-          const copy = msgs.slice();
-          const last = copy[copy.length - 1];
-          if (last && last.role === "assistant") {
-            copy[copy.length - 1] = {
-              ...last, streaming: false,
-              // Iter 141 — final progress milestone. Snap to 100%
+        // P0 audit fix (claim #7) — id-matched, not positional.
+        // Guard kept verbatim (role-only, as before).
+        setMessages((msgs) => updateTurnBubble(msgs,
+          (last) => last.role === "assistant",
+          (last) => ({
+            ...last, streaming: false,
+            // Iter 141 — final progress milestone. Snap to 100%
               // so the bar briefly shows fully-green right before
               // disappearing (the streaming:false flip removes the
               // bar from MessageBubble's render path).
@@ -3316,10 +3367,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
               scopeConfirmationPrompt: d.scope_confirmation_prompt || (d.awaiting_scope_confirmation ? finalPrompt : null),
               scopeExecution: d.scope_execution || null,
               ...interactionFields(d),
-            };
-          }
-          return copy;
-        });
+            })));
         setBusy(false);
         abortRef.current = null;
         manualRetryRef.current = null;
@@ -3394,14 +3442,19 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         if (/^\s*(<!doctype\s+html|<html|<head|<body)/i.test(errText)) {
           errText = "The server was briefly unavailable. Try again in a moment.";
         }
+        // P0 audit fix (claim #7) — id-matched, not positional.
+        // The preceding-user-bubble mark now hangs off the matched
+        // assistant bubble's index instead of `length - 2`, so a
+        // late error can't flag the wrong user turn as failed.
         setMessages((msgs) => {
+          const idx = msgs.findIndex((m) => m && m.id === turnBubbleId);
+          if (idx < 0) return msgs;
+          const last = msgs[idx];
+          if (!last || last.role !== "assistant") return msgs;
           const copy = msgs.slice();
-          const last = copy[copy.length - 1];
-          if (last && last.role === "assistant") {
-            copy[copy.length - 1] = {
-              ...last, content: `⚠ ${errText}`, error: true, streaming: false,
-            };
-          }
+          copy[idx] = {
+            ...last, content: `⚠ ${errText}`, error: true, streaming: false,
+          };
           // 2026-09-11 — real QA repro (TC-C): the user bubble sent
           // just before this failed assistant turn stayed looking
           // exactly like a normal, successfully-delivered message —
@@ -3411,7 +3464,7 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           // above: for ANY send failure (network error, 500, expired
           // session, etc.), mark the preceding user bubble as not
           // delivered instead of leaving it looking sent.
-          const userIdx = copy.length - 2;
+          const userIdx = idx - 1;
           if (userIdx >= 0 && copy[userIdx]?.role === "user") {
             copy[userIdx] = { ...copy[userIdx], sendFailed: true };
           }

@@ -237,9 +237,17 @@ async def self_heal(file_obj: dict, lint_errors: list[str],
         "\n--- END ERRORS ---\n\nReturn the corrected file content only."
     )
     try:
+        # P0 audit fix (2026-11-25, B2) — was a literal
+        # `max_tokens=2500`, which truncated rewrites of large files
+        # mid-syntax (the model must reproduce the WHOLE file). Raised
+        # to 32,000, the same ceiling Parliament councils already
+        # request (core/parliament/councils.py caps at 32_000); the
+        # per-mode clamp that used to sit underneath this is gone too
+        # (services/llm/_meta.py, B1), so the request now reaches the
+        # provider, which enforces its own model maximum.
         meta = await call_llm_with_meta(
             system=sys_msg, user=user_msg,
-            max_tokens=2500, mode="code",
+            max_tokens=32000, mode="code",
             user_id=user_id, review_mode="pro",
             feature="Self-Heal Retry",
         )

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from typing import AsyncIterator, Optional
 
@@ -58,6 +59,55 @@ def _today_line(user_tz: Optional[str] = None, now_utc=None) -> str:
     )
 
 
+def _content_text(content) -> str:
+    """Normalise message content to plain text for token estimation.
+    OpenAI multimodal content is a LIST of parts — len(list) is the
+    PART count, not the text length (2026-11-25 audit Part IX F(c4)):
+    a long text part + an image counted as ~1 token. Join the text
+    parts; image parts contribute a fixed token charge instead."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, dict) and p.get("type") == "text":
+                parts.append(p.get("text") or "")
+            elif isinstance(p, dict) and p.get("type") in ("image_url", "image"):
+                parts.append("[image]")
+        return "\n".join(parts)
+    return str(content or "")
+
+
+def _content_image_count(content) -> int:
+    if isinstance(content, list):
+        return sum(
+            1 for p in content
+            if isinstance(p, dict) and p.get("type") in ("image_url", "image")
+        )
+    return 0
+
+
+# 2026-11-25 audit Part IX F(c5): never log raw tool arguments —
+# model-generated args can echo user-pasted secrets or credential
+# URLs into server logs. Reuses services.task_chain_logging's
+# redactor (same helper local_tools.py uses) plus an embedded-auth
+# URL pattern it does not cover (https://user:pass@host).
+_URL_AUTH_RE = re.compile(r"(https?://[^/\s:]+:)[^@/\s]+@")
+
+
+def _redact_tool_args(text: str) -> str:
+    """Best-effort secret redaction for log lines. Never raises."""
+    try:
+        text = _URL_AUTH_RE.sub(r"\1[REDACTED]@", text)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from services.task_chain_logging import redact_secrets
+        return redact_secrets(text)
+    except Exception:  # noqa: BLE001
+        return text
+
+
 def _history_turns(session: dict) -> list:
     """Token-budget window (F8) — sync mirror of
     `session.build_llm_messages`: keep the full transcript while its
@@ -72,8 +122,14 @@ def _history_turns(session: dict) -> list:
     ceiling = int(os.getenv("ORA_CONTEXT_TOKEN_CEILING", "100000"))
     tail_budget = int(os.getenv("ORA_TAIL_TOKEN_BUDGET", "70000"))
 
-    def _est(text):
-        return int(len(text or "") / 3.5) + 1
+    def _est(content):
+        # 2026-11-25 audit Part IX F(c4): content may be a multimodal
+        # LIST — len(list) is the part count. Normalise to text first
+        # and charge a fixed ~1000 tokens per image part (conservative
+        # vision-tile estimate) so a long text part + image cannot
+        # masquerade as ~1 token and overflow the context window.
+        return (int(len(_content_text(content)) / 3.5) + 1
+                + 1000 * _content_image_count(content))
 
     if sum(_est(m.get("content", "")) for m in msgs) <= ceiling:
         return msgs
@@ -206,15 +262,20 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
     except Exception:
         house_rules_text = ""
 
-    state_block = await build_state_block(db)
+    # P0 audit fix (2026-11-25, D3 residual) — pass the turn's
+    # user_tz through so state_as_of renders in the user's zone
+    # instead of UTC-only.
+    state_block = await build_state_block(db, user_tz=user_tz)
     yield {"type": "state", "state_as_of": state_block.splitlines()[1]
            if len(state_block.splitlines()) > 1 else ""}
 
     # F1 — server-side date/time on EVERY turn, computed fresh from
     # the real clock. The "Today is ..." line is the model's quotable
     # source of truth; the Runtime context block adds the machine-
-    # readable now_utc / now_<tz> lines. state_as_of stays what it
-    # is — a data-freshness stamp, NOT the clock.
+    # readable now_utc / now_<tz> lines. state_as_of is still just a
+    # data-freshness stamp, NOT the clock — it is now rendered in the
+    # user's zone (D3 residual fix above) so the stamp itself is not
+    # misread as a UTC time.
     system_parts = [_today_line(user_tz)]
     try:
         from services.ora_chat.safety import build_runtime_context
@@ -307,7 +368,7 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
                 corrective_err = None
                 async for r_evt in llm_client.stream_chat(
                         messages=messages + [{"role": "user", "content": _EMPTY_REPLY_RETRY}],
-                        tools=None, reasoning=think_mode, db=db, user_id=admin_id):
+                        tools=None, reasoning=False, db=db, user_id=admin_id):
                     if r_evt["type"] == "delta":
                         corrective_text += r_evt["content"]
                     elif r_evt["type"] == "truncated":
@@ -452,6 +513,25 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
                 proposed_action = call["arguments"]
                 tool_result = {"queued": True,
                                 "note": "Proposal captured; will render as an approval card."}
+            elif call["name"] == "propose_action":
+                # 2026-11-25 audit Part IX F(b): REJECT explicitly at
+                # the engine level — do NOT fall through to
+                # execute_tool (which today rejects it as
+                # undefined_tool, but only by accident of it not being
+                # in _DISPATCH; adding it there would silently turn
+                # this fallthrough into a live bypass). No `tool_call`
+                # SSE event either — the old code yielded a misleading
+                # one for a call that was never executed. The model
+                # gets a clear error back in the tool message instead.
+                _reject_reason = (
+                    "actions are disabled in this session"
+                    if not allow_actions else
+                    "only one action proposal is allowed per turn")
+                tool_result = {"error": "action_not_allowed",
+                               "detail": _reject_reason}
+                yield {"type": "tool_result", "name": "propose_action",
+                       "summary": f"rejected: {_reject_reason}",
+                       "browser_available": None}
             else:
                 yield {"type": "tool_call", "name": call["name"], "args": call["arguments"]}
                 tool_result = await tools_mod.execute_tool(db, call["name"], call["arguments"],
@@ -467,19 +547,37 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
                 yield {"type": "tool_result", "name": call["name"],
                        "summary": str(tool_result)[:300],
                        "browser_available": _browser_available}
+            # 2026-11-25 audit Part IX F(c3): valid JSON, not a Python
+            # repr — same fix as the assistant-side json.dumps above
+            # (single-quoted repr breaks strict providers on replay).
+            # Truncation is explicit AND stays valid JSON: cutting the
+            # serialized text mid-string would still be unparseable,
+            # so an over-long result is wrapped with a truncation
+            # flag + preview instead.
+            _tool_text = json.dumps(tool_result, default=str)
+            if len(_tool_text) > 12000:
+                _tool_text = json.dumps({
+                    "truncated_tool_result": True,
+                    "original_chars": len(_tool_text),
+                    "preview": _tool_text[:11000],
+                })
             messages.append({"role": "tool", "tool_call_id": call["id"],
-                              "content": str(tool_result)[:12000]})
+                              "content": _tool_text})
             # 2026-09-27 — P0-1(a/d): durable server-side log of every
             # tool round, independent of whether the frontend rendered
             # the corresponding tool_call/tool_result SSE events. Keyed
             # on session_id so a founder-reported turn can be traced
             # round-by-round after the fact.
+            # 2026-11-25 audit Part IX F(c5): NEVER log raw tool
+            # arguments — redact secrets / embedded-auth URLs first.
             _err = tool_result.get("error") if isinstance(tool_result, dict) else None
             logger.info(
                 "ora_chat_v2 TOOL_ROUND session=%s user=%s round=%s tool=%s "
                 "args=%s result_size=%s error=%s",
                 session.get("session_id", ""), admin_id, round_idx, call["name"],
-                str(call["arguments"])[:200], len(str(tool_result)), _err)
+                _redact_tool_args(str(call["arguments"]))[:200],
+                len(str(tool_result)),
+                _redact_tool_args(str(_err))[:200] if _err is not None else None)
 
         if is_final_round_attempt:
             # Ran out of rounds with only tool calls pending — force a
@@ -518,6 +616,23 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
                                  "logged with your session ID — please try a "
                                  "narrower question."}
                 return
+            # 2026-11-25 audit Part IX F(c2): the round-limit close-out
+            # used to skip run_post_response_check entirely, so the
+            # final event could report `ungrounded: []` for a reply
+            # that was never checked. Run the same grounding check
+            # here; if the check itself fails, mark the reply
+            # explicitly unchecked — never silently clean.
+            try:
+                _close_grounding = await ora_grounding.run_post_response_check(
+                    user_id=admin_id,
+                    session_id=session.get("session_id", ""),
+                    query=user_message, reply=forced_text,
+                    route="ora_chat_v2",
+                )
+                ungrounded = _close_grounding.get("fabricated") or []
+            except Exception as e:  # noqa: BLE001
+                logger.warning("ora v2 close-out grounding check failed: %r", e)
+                ungrounded = ["unchecked:round_limit_close_out"]
 
     full_reply = "".join(final_text_parts)
     # F4 — same plain-language note on the round-limit close-out path.

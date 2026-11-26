@@ -295,13 +295,125 @@ def _has_executable_python(blocks: dict) -> bool:
     return False
 
 
+def _changed_lines_body(lines: list[str], changed: set[int]) -> tuple[str, set[int]]:
+    """Build the review body for ONE file in diff mode from the CHANGED
+    lines themselves (±3 lines of context each) instead of head/tail
+    truncation. A vuln on a changed line in the middle of a 600-line
+    file must be VISIBLE to the reviewer — the old first/last-250
+    cut hid exactly those lines while the CHANGED_LINES header still
+    told the model to review them.
+
+    Returns (body, visible) where `visible` is the subset of `changed`
+    actually present in the body, so the caller can list ONLY those
+    lines in the CHANGED_LINES header — never a line that was cut
+    away. Lines are prefixed with their 1-indexed number so the
+    model can cite them. When the changed region is huge (>600 kept
+    lines) we keep the first/last 300 kept lines and `visible`
+    shrinks accordingly (still changed-lines-only)."""
+    keep: set[int] = set()
+    for ln in changed:
+        lo = max(1, ln - 3)
+        hi = min(len(lines), ln + 3)
+        keep.update(range(lo, hi + 1))
+    if not keep:
+        return "", set()
+    ordered = sorted(keep)
+    if len(ordered) > 600:
+        kept = sorted(set(ordered[:300]) | set(ordered[-300:]))
+    else:
+        kept = ordered
+    kept_set = set(kept)
+    visible = {ln for ln in changed if ln in kept_set}
+    parts: list[str] = []
+    buf = [f"{kept[0]:6d}| {lines[kept[0] - 1]}"]
+    prev = kept[0]
+    for ln in kept[1:]:
+        if ln == prev + 1:
+            buf.append(f"{ln:6d}| {lines[ln - 1]}")
+        else:
+            parts.append("\n".join(buf))
+            parts.append(f"# … ({ln - prev - 1} unchanged lines omitted) …")
+            buf = [f"{ln:6d}| {lines[ln - 1]}"]
+        prev = ln
+    parts.append("\n".join(buf))
+    return "\n".join(parts), visible
+
+
+def _repair_python_literals(text: str) -> str:
+    """Replace Python-style literals (True/False/None) with their JSON
+    equivalents ONLY outside string literals. A global str.replace
+    corrupts finding text ("NoneType" → "nullType"); this scanner
+    tracks in-string state (with backslash escapes) and leaves
+    string contents byte-identical."""
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    in_str: str | None = None
+    while i < n:
+        ch = text[i]
+        if in_str is not None:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == in_str:
+                in_str = None
+            i += 1
+            continue
+        if ch in ("\"", "'"):
+            in_str = ch
+            out.append(ch)
+            i += 1
+            continue
+        for py, js in (("True", "true"), ("False", "false"), ("None", "null")):
+            if text.startswith(py, i):
+                before = text[i - 1] if i > 0 else ""
+                after = text[i + len(py)] if i + len(py) < n else ""
+                if not (before.isalnum() or before == "_") and not (
+                    after.isalnum() or after == "_"
+                ):
+                    out.append(js)
+                    i += len(py)
+                    break
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def _parse_review_json(text: str) -> dict | None:
+    """Parse the verify-agent's JSON reply. Returns the dict, or None
+    when nothing parseable exists (caller fails closed). Tries, in
+    order: strict JSON → scoped Python-literal repair → {…} brace
+    extraction (strict, then repaired). Never raises."""
+    import re
+
+    candidates = [text, _repair_python_literals(text)]
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if m:
+        candidates.append(m.group(0))
+        candidates.append(_repair_python_literals(m.group(0)))
+    for cand in candidates:
+        try:
+            data = json.loads(cand)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
 async def _llm_review(file_blocks: dict, repo_ctx: str,
                      line_map: Optional[dict[str, set[int]]] = None) -> dict:
     """Make the second-agent LLM call. Iter 169 — uses OpenRouter
     (anthropic/claude-sonnet-4.5). Returns
-    {pass, findings, summary, model}. On any error, returns pass=True
-    with a note so we don't accidentally block the pipeline on
-    transient infra; the regex scan stays the floor.
+    {pass, findings, summary, model}. On LLM/infra error, returns
+    pass=True with a note so we don't accidentally block the pipeline
+    on transient infra; the regex scan stays the floor. On
+    UNPARSEABLE output (2026-11-25 audit Part IX (b)) it fails
+    CLOSED (pass=False + CRITICAL finding) — "the reviewer produced
+    no usable verdict" is not transient infra.
 
     Iter 212m-132 — When `line_map` is provided (diff-aware mode),
     we annotate the patch envelope so the LLM understands which
@@ -330,7 +442,19 @@ async def _llm_review(file_blocks: dict, repo_ctx: str,
         )
     for path, content in (file_blocks or {}).items():
         lines = (content or "").split("\n")
-        if len(lines) > 500:
+        # 2026-11-25 audit Part IX (a): in diff mode the body is built
+        # from the CHANGED lines (±3 context) — never head/tail
+        # truncation, which hid changed middle lines while the header
+        # still listed them as in-scope. `visible_changed` is the
+        # subset actually present, so the header below cannot list a
+        # line that was cut away.
+        visible_changed: set[int] = set()
+        changed_set = set(line_map.get(path) or set()) if diff_mode_active else set()
+        if diff_mode_active and changed_set:
+            body, visible_changed = _changed_lines_body(lines, changed_set)
+            if not body:
+                body = content or ""
+        elif len(lines) > 500:
             head = "\n".join(lines[:250])
             tail = "\n".join(lines[-250:])
             body = head + "\n# … (truncated middle) …\n" + tail
@@ -338,7 +462,7 @@ async def _llm_review(file_blocks: dict, repo_ctx: str,
             body = content or ""
         header = f"### {path}"
         if diff_mode_active:
-            ln_set = sorted(line_map.get(path) or set())
+            ln_set = sorted(visible_changed)
             # Compress consecutive runs for readability:
             # [1,2,3,7,8] -> "1-3, 7-8"
             runs: list[str] = []
@@ -458,26 +582,63 @@ async def _llm_review(file_blocks: dict, repo_ctx: str,
         if text.startswith("json"):
             text = text[4:].lstrip()
 
-        # Iter 212m-11 — some LLMs (especially smaller open-weights
-        # responding through OpenRouter) occasionally emit Python-
-        # style literals inside what is otherwise JSON ("pass": True,
-        # "value": None). Normalise BEFORE json.loads so we don't
-        # drop the entire review on a single bad bool/None.
-        text = text.replace("True", "true")
-        text = text.replace("False", "false")
-        text = text.replace("None", "null")
-
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            # The model returned prose — extract anything JSON-shaped
-            import re
-            m = re.search(r"\{.*\}", text, re.DOTALL)
-            data = json.loads(m.group(0)) if m else {}
+        # 2026-11-25 audit Part IX (b) — FAIL-CLOSED parsing. The old
+        # code did a GLOBAL str.replace("True"→"true" …) over the whole
+        # response (corrupting string values: "NoneType"→"nullType")
+        # and then `bool(data.get("pass", True))` — so unparseable
+        # output PASSED, and a string "false" PASSED (bool("false")
+        # is True). New rules:
+        #   • strict json.loads first;
+        #   • fallback: replace Python literals ONLY outside string
+        #     literals (a small scanner, not a global replace), then
+        #     re-parse; then a {…} extraction attempt, same way;
+        #   • anything still unparseable, or a missing/non-boolean
+        #     "pass", FAILS CLOSED — with a CRITICAL finding so the
+        #     severity-based blocking rule in verify_patch() also
+        #     blocks (a bare pass=False with no findings would not).
+        #   • "pass" is True ONLY for real JSON true (or the string
+        #     "true"); the string "false" is False.
+        data = _parse_review_json(text)
+        if data is None:
+            return {
+                "pass":     False,
+                "findings": [{
+                    "file": "", "line": 0, "severity": "CRITICAL",
+                    "rule": "verify-agent-unparseable",
+                    "message": ("verify-agent returned unparseable "
+                                "output — failing closed; no usable "
+                                "verdict was produced"),
+                }],
+                "summary":  "verify-agent unparseable output (fail-closed)",
+                "model":    model_used,
+            }
+        raw_pass = data.get("pass")
+        coerced_pass = raw_pass is True or (
+            isinstance(raw_pass, str) and raw_pass.strip().lower() == "true"
+        )
+        raw_findings = data.get("findings") or []
+        findings = raw_findings if isinstance(raw_findings, list) else []
+        # A missing or non-boolean "pass" is not a verdict at all —
+        # fail closed with a CRITICAL finding so the severity rule in
+        # verify_patch() blocks (a bare pass=False with no findings
+        # would not). An EXPLICIT false (bool, or the string "false")
+        # is a usable verdict: the severity rule decides.
+        verdict_usable = raw_pass is True or raw_pass is False or (
+            isinstance(raw_pass, str)
+            and raw_pass.strip().lower() in ("true", "false")
+        )
+        if not verdict_usable:
+            coerced_pass = False
+            findings = [{
+                "file": "", "line": 0, "severity": "CRITICAL",
+                "rule": "verify-agent-no-verdict",
+                "message": ("verify-agent returned no usable pass verdict "
+                            "(missing or non-boolean 'pass') — failing closed"),
+            }] + findings
         return {
-            "pass":     bool(data.get("pass", True)),
-            "findings": list(data.get("findings", []) or []),
-            "summary":  str(data.get("summary", ""))[:500],
+            "pass":     coerced_pass,
+            "findings": findings,
+            "summary":  str(data.get("summary") or "")[:500],
             "model":    model_used,
         }
     except Exception as e:
@@ -497,18 +658,26 @@ async def _e2b_smoke(file_blocks: dict) -> dict:
     if not py_files or not _has_executable_python(py_files):
         return {"pass": True, "skipped": True,
                 "reason": "no executable python in patch"}
-    # Build a multi-file import probe: write each file then `import` it
-    # by module path so we catch SyntaxError, ImportError, top-level
-    # NameError, etc., without actually running side-effects.
-    probe_lines: list[str] = ["import os, sys"]
+    # Build a multi-file import probe: write each file then `import`
+    # it by module path so we catch SyntaxError, ImportError, top-level
+    # NameError, etc. (2026-11-25 audit Part IX (c): the old probe
+    # only ran compile(), which checks syntax and never executes
+    # top-level code — bad imports and undefined names sailed
+    # through. The sys.path setup below is what makes the import
+    # resolve to the just-written file instead of an installed
+    # same-named module. Top-level side effects DO run — that is the
+    # point of the E2B sandbox boundary.)
+    probe_lines: list[str] = ["import os, sys, importlib"]
     for i, (path, content) in enumerate(py_files.items()):
         safe = path.replace("/", "_").replace(".py", "")
         probe_lines.append(f"os.makedirs(os.path.dirname({path!r}) or '.', exist_ok=True)")
         probe_lines.append(f"open({path!r}, 'w').write({content!r})")
         probe_lines.append(f"sys.path.insert(0, os.path.dirname({path!r}) or '.')")
-    # Then for each file try to compile it (catches SyntaxError + imports)
+    # Actually import each module (not compile()): catches SyntaxError
+    # AND ImportError AND top-level NameError.
     for path in py_files:
-        probe_lines.append(f"compile(open({path!r}).read(), {path!r}, 'exec')")
+        mod = path[:-3].replace("/", ".") if path.endswith(".py") else path
+        probe_lines.append(f"importlib.import_module({mod!r})")
     probe = "\n".join(probe_lines)
     try:
         from .sandbox_runner import run_python_check
@@ -543,6 +712,11 @@ async def verify_patch(
       • LLM findings block ONLY when their severity meets the
         configured threshold for the active `mode` (Swift / Pro / Maxx).
       • E2B smoke-import failure ALWAYS blocks (syntax/import errors).
+      • 2026-11-25 audit Part IX (d): `agent.pass` in the returned
+        payload is the BLOCKING decision (not the reviewer's raw
+        self-assessment — that lives in `agent.self_assessed_pass`),
+        so the two can never diverge silently. A crashed LLM/E2B
+        task fails closed instead of discarding the regex verdict.
       • Admin can flip the master enabled flag from `/admin/vanguard`
         to skip the LLM + E2B passes entirely — regex floor still gates
         on its own CRITICAL findings.
@@ -613,11 +787,36 @@ async def verify_patch(
 
     # Always run the second agent + E2B in parallel — they don't depend
     # on each other and the latency budget matters.
+    # 2026-11-25 audit Part IX (d): return_exceptions=True so ONE
+    # failing task cannot crash verify_patch and discard the
+    # already-computed regex verdict (the caller falls through to
+    # commit on the crash today). An exception result fails CLOSED.
     llm_task = asyncio.create_task(_llm_review(file_blocks or {}, repo_ctx,
                                                line_map=line_map))
     e2b_task = asyncio.create_task(_e2b_smoke(file_blocks or {}))
     llm_review, e2b_result = await asyncio.gather(llm_task, e2b_task,
-                                                  return_exceptions=False)
+                                                  return_exceptions=True)
+    if isinstance(llm_review, BaseException):
+        logger.warning("vanguard-verify LLM task crashed (%r) — failing closed",
+                       llm_review)
+        llm_review = {
+            "pass": False,
+            "findings": [{
+                "file": "", "line": 0, "severity": "CRITICAL",
+                "rule": "verify-agent-crashed",
+                "message": (f"verify-agent task raised "
+                            f"{type(llm_review).__name__} — failing closed"),
+            }],
+            "summary": f"verify-agent crashed ({type(llm_review).__name__})",
+            "model": "",
+        }
+    if isinstance(e2b_result, BaseException):
+        logger.warning("vanguard-verify E2B task crashed (%r) — failing closed",
+                       e2b_result)
+        e2b_result = {
+            "pass": False, "skipped": False,
+            "stderr": f"e2b smoke task raised {type(e2b_result).__name__}",
+        }
 
     # Iter 212m-132 — drop LLM findings that landed on pre-existing
     # lines as a double-check.  The LLM was told via the prompt
@@ -636,10 +835,27 @@ async def verify_patch(
     ]
     llm_blocked = bool(blocking_llm_findings) and block_level != "OFF"
 
+    # 2026-11-25 audit Part IX (d) — reconcile the two pass values.
+    # The reviewer's own `pass` was never read here, so `agent.pass`
+    # and the top-level `pass` could disagree silently in both
+    # directions. The documented rule stands (blocking is severity-
+    # based: pass=False + only LOW findings does NOT block), but the
+    # REPORTED agent.pass now reflects the blocking decision, and the
+    # reviewer's raw self-assessment is preserved separately as
+    # `self_assessed_pass` — a divergence is explicit, never silent.
+    # (A fail-closed review — unparseable output, crashed task — now
+    # carries a CRITICAL finding, so it blocks through this same rule
+    # instead of being overwritten back to pass.)
+    llm_self_pass = llm_review.get("pass") is True
+    llm_review["self_assessed_pass"] = llm_self_pass
+    llm_review["pass"] = not llm_blocked
+    llm_diverged = llm_self_pass == llm_blocked  # self-assessment vs verdict disagree
+
     for f in llm_review.get("findings", []) or []:
         f.setdefault("source", "vanguard_verify_agent")
         findings.append(f)
-    e2b_blocked = not e2b_result.get("pass", True)
+    # Fail-closed on a missing/non-bool e2b pass (was .get("pass", True)).
+    e2b_blocked = e2b_result.get("pass") is not True
 
     overall_pass = not (regex_blocked or llm_blocked or e2b_blocked)
 
@@ -653,10 +869,18 @@ async def verify_patch(
         n_block    = len(blocking_llm_findings)
         llm_skip_note = (f", {len(llm_skipped)} pre-existing skipped"
                          if llm_skipped else "")
+        diverge_note = ""
+        if llm_diverged:
+            diverge_note = (
+                " [reviewer self-assessed "
+                f"pass={llm_self_pass}, verdict pass={not llm_blocked} "
+                "per severity rule]"
+            )
         summary_parts.append(
             f"verify-agent ({llm_review['model']}, {mode}/{block_level}): "
             f"{'BLOCK' if llm_blocked else 'pass'} "
             f"({n_findings} findings, {n_block} ≥{block_level}{llm_skip_note})"
+            f"{diverge_note}"
         )
     else:
         summary_parts.append("verify-agent: skipped")

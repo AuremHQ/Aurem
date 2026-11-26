@@ -79,19 +79,37 @@ _CLAUDE_MODES = {"code", "review"}
 
 
 # ═══ V2 council routing flags ═══════════════════════════════════
-# Per /app/memory/V2_ROUTING_ROADMAP.md. All flags default False so
-# existing callers see zero behaviour change until env enables them.
+# Per /app/memory/V2_ROUTING_ROADMAP.md.
 #
-#   LONGCAT_ENABLED       → Council A primary swaps GLM-5.2 → LongCat-2.0
-#                           Claude Sonnet 4.5 remains the rescue for pro/maxx.
-#   COUNCIL_B_GLM_ENABLED → mode="analysis" primary uses GLM-5.2 with DeepSeek
-#                           rescue.  When False, mode="analysis" behaves like
-#                           mode="chat" (DeepSeek only) — Council B unchanged.
-#   CEO_RESCUE_ENABLED    → CEO judge wraps its GLM-5.2 call in a
-#                           2 s timeout; on timeout falls back to DeepSeek.
+# Findings fix 2026-11-25 — defaults flipped per flag, tests first:
+#   CEO_RESCUE_ENABLED    → True (safest flip: on = same GLM judge
+#                           call with a 2 s timeout + DeepSeek rescue
+#                           ONLY when the primary already failed;
+#                           strictly dominates off on availability).
+#                           NOTE: real CEO judge latency vs the 2 s
+#                           default was NOT measurable from this VM
+#                           (no live probe) — if GLM judge p50 > 2 s
+#                           the rescue fires spuriously on every
+#                           below-floor file; confirm from Langfuse
+#                           before relying on the default.
+#   COUNCIL_B_GLM_ENABLED → True (analysis primary GLM-5.2 with
+#                           DeepSeek rescue; the rescue chain is
+#                           complete in _meta.py:577-640 and the
+#                           effect is proven in tests).
+#   LONGCAT_ENABLED       → stays False. The dead-model fallback IS
+#                           verified (_call_longcat fast-paths to GLM
+#                           when LONGCAT_LIVE=False, flips the flag +
+#                           falls back on empty/tool-tag replies) BUT
+#                           _LONGCAT_MODEL defaults to
+#                           "anthropic/claude-sonnet-4.5" — NOT
+#                           meituan/longcat-2.0 — so flipping the flag
+#                           with stock env would move ALL mode="code"
+#                           traffic to Claude at Claude prices, with
+#                           no shadow/parity numbers. That is a
+#                           founder/deploy decision, not a code fix.
 LONGCAT_ENABLED       = os.getenv("LONGCAT_ENABLED", "false").lower() == "true"
-COUNCIL_B_GLM_ENABLED = os.getenv("COUNCIL_B_GLM_ENABLED", "false").lower() == "true"
-CEO_RESCUE_ENABLED    = os.getenv("CEO_RESCUE_ENABLED", "false").lower() == "true"
+COUNCIL_B_GLM_ENABLED = os.getenv("COUNCIL_B_GLM_ENABLED", "true").lower() == "true"
+CEO_RESCUE_ENABLED    = os.getenv("CEO_RESCUE_ENABLED", "true").lower() == "true"
 
 # CEO rescue config (used when CEO_RESCUE_ENABLED=True — see core/loop hub)
 CEO_PRIMARY_TIMEOUT_S = float(os.getenv("CEO_PRIMARY_TIMEOUT_S", "2.0"))

@@ -51,7 +51,8 @@ async def call_llm_with_meta(system: str, user: str,
                               user_id: Optional[str] = None,
                               review_mode: Optional[str] = None,
                               step_hook=None,
-                              feature: Optional[str] = None) -> dict:
+                              feature: Optional[str] = None,
+                              temperature: Optional[float] = None) -> dict:
     """Thin wrapper — sets the ambient `user_id` tag (2026-09-27 P0
     usage-tracking fix) for the duration of this call so
     `call_openrouter_model` can (a) tag the real OpenRouter request
@@ -59,7 +60,13 @@ async def call_llm_with_meta(system: str, user: str,
     threading `user_id` through every intermediate agent/function in
     the 4-hop chain below. See `services.loop_token_ledger.
     llm_user_context` for why a contextvar instead of a new parameter
-    everywhere. Full implementation + docstring: `_call_llm_with_meta_impl`."""
+    everywhere. Full implementation + docstring: `_call_llm_with_meta_impl`.
+
+    Part X fix 6 — `temperature` is a real parameter now (was
+    missing, so every parliament call raised TypeError on its first
+    attempt and the caller's temperature was silently dropped).
+    None means "decide from mode" (`temperature_for(mode)`), which
+    is what every existing caller gets."""
     from services.loop_token_ledger import llm_user_context, llm_surface_context
     async with llm_user_context(user_id), llm_surface_context(mode=mode):
         # ORA Brain Part 3, Phase E — record-only gateway. claim_recording
@@ -72,6 +79,7 @@ async def call_llm_with_meta(system: str, user: str,
             result = await _call_llm_with_meta_impl(
                 system, user, max_tokens=max_tokens, mode=mode, user_id=user_id,
                 review_mode=review_mode, step_hook=step_hook, feature=feature,
+                temperature=temperature,
             )
             if not _already_claimed:
                 try:
@@ -99,7 +107,8 @@ async def _call_llm_with_meta_impl(system: str, user: str,
                               user_id: Optional[str] = None,
                               review_mode: Optional[str] = None,
                               step_hook=None,
-                              feature: Optional[str] = None) -> dict:
+                              feature: Optional[str] = None,
+                              temperature: Optional[float] = None) -> dict:
     """
     Orchestrator-facing entry point.
 
@@ -233,6 +242,7 @@ async def _call_llm_with_meta_impl(system: str, user: str,
             system=system, user=user, max_tokens=max_tokens,
             mode=mode, user_id=user_id, review_mode=review_mode,
             step_hook=step_hook, feature=feature,
+            temperature=temperature,
         )
         _lf["success"](result)
 
@@ -279,7 +289,8 @@ async def _call_llm_with_meta_inner(system: str, user: str,
                                      user_id: Optional[str] = None,
                                      review_mode: Optional[str] = None,
                                      step_hook=None,
-                                     feature: Optional[str] = None) -> dict:
+                                     feature: Optional[str] = None,
+                                     temperature: Optional[float] = None) -> dict:
     """Real body of call_llm_with_meta — Iter 212m-119 split for tracing.
 
     Iter 367 (audit cleanup) — Removed the litellm.Router opt-in path
@@ -307,12 +318,24 @@ async def _call_llm_with_meta_inner(system: str, user: str,
         _call_longcat,
         _deepseek_model,
         _openrouter_key,
-        cap_for,
         temperature_for,
     )
 
-    temperature = temperature_for(mode)
-    actual_tokens = min(max_tokens, cap_for(mode))
+    # Part X fix 6 — an explicit caller temperature wins; None keeps
+    # the old mode-derived default, so existing callers are unchanged.
+    temperature = temperature if temperature is not None else temperature_for(mode)
+    # P0 audit fix (2026-11-25, B1) — the per-mode cap used to clamp
+    # EVERY request here: `actual_tokens = min(max_tokens,
+    # cap_for(mode))` silently overrode council requests of up to
+    # 32,000 (core/parliament/councils.py) down to the per-mode budget
+    # (code 3500 / chat 4000 / review 4096 / analysis 2000), truncating
+    # long reviews mid-sentence. The requested max_tokens now passes
+    # through unchanged; the per-mode budgets in _routing.MAX_TOKENS
+    # remain the DEFAULTS callers pass when they don't ask for more,
+    # and each provider still enforces its own model maximum.
+    # `cap_for` stays importable from services.llm (via _routing) for
+    # callers/tests that read the default budgets.
+    actual_tokens = max_tokens
 
     # ── Iter 212m-18 — Review-mode routing (Swift / Pro / Maxx) ─────────
     # Iter 212m-159 — Council A primary swaps GLM-5.2 → LongCat-2.0 when

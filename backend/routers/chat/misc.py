@@ -279,6 +279,36 @@ BUSINESS_OWNER_VOICE_CONTRACT = (
 )
 
 
+# P0 audit fix (2026-11-25, B5) — scope the contract to non-technical
+# profiles only. It used to be appended on EVERY non-ora_panel turn,
+# so a refactoring/code task got told "never say commit, push, deploy,
+# repo, file, API" and "say 'your main page'" — the exact words a code
+# task needs. Gate on signals the code ALREADY computes, no new
+# profile system:
+#   * `recall_mode` — classify_intent()'s taxonomy (services/
+#     chat_helpers.py): "C" = code/build/deploy/fix/refactor,
+#     "D" = debug, "E" = audit. "A" (factual/greeting), "B" (advice),
+#     "F" (engage/marketing) are non-technical, so the contract still
+#     applies. None (classification unavailable) keeps the old
+#     behaviour — the contract applies.
+#   * `execution_mode == "loop"` — the 5-phase Plan→Execute→Verify→
+#     Security→Ship pipeline (ChatBody.execution_mode); a loop turn is
+#     a technical task execution by definition, whatever the prompt
+#     classified as.
+_TECHNICAL_RECALL_MODES = frozenset({"C", "D", "E"})
+
+
+def business_voice_applies(recall_mode=None, execution_mode=None) -> bool:
+    """True when BUSINESS_OWNER_VOICE_CONTRACT belongs in this turn's
+    system prompt: non-technical/business turns only, never code,
+    debug, audit, or loop-execution turns."""
+    if (execution_mode or "").lower() == "loop":
+        return False
+    if (recall_mode or "").upper() in _TECHNICAL_RECALL_MODES:
+        return False
+    return True
+
+
 
 @router.get("/agents/list")
 async def list_agents(authorization: Optional[str] = Header(None)) -> dict:

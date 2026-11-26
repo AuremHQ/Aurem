@@ -20,7 +20,10 @@ from scan output naturally (the stale ledger row simply never matches
 again).
 """
 from __future__ import annotations
+import logging
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 
 def finding_key(f: dict) -> str:
@@ -38,8 +41,17 @@ def finding_key(f: dict) -> str:
 
 async def record_fixed(db, *, user_id: str, project_id: str,
                        finding: dict, commit_sha: str = "",
-                       html_url: str = "", tool: str = "") -> None:
-    """Upsert a fixed-finding row. Call ONLY after a successful fix."""
+                       html_url: str = "", tool: str = "") -> bool:
+    """Upsert a fixed-finding row. Call ONLY after a successful fix.
+
+    Part X fix 4 — returns True on success, False on failure (and
+    logs a warning).  It used to swallow every error with a bare
+    `except Exception: pass`, so a failed upsert left no trace and
+    the next rescan silently resurrected the finding.  It still
+    does NOT raise: the other callers (security_scan,
+    codebase_health) call it outside a try and must never turn a
+    successful fix into a 500 — callers that care (fix_pipeline)
+    check the return value and record the failure on the job."""
     key = finding_key(finding)
     try:
         await db.fixed_findings.update_one(
@@ -56,8 +68,15 @@ async def record_fixed(db, *, user_id: str, project_id: str,
             }},
             upsert=True,
         )
-    except Exception:
-        pass
+        return True
+    except Exception as e:                                # noqa: BLE001
+        logger.warning(
+            "record_fixed failed user=%s project=%s key=%s err=%r — "
+            "fix is live but the ledger row is missing; a rescan may "
+            "resurrect this finding",
+            user_id, project_id, key, e,
+        )
+        return False
 
 
 async def get_fixed_map(db, *, user_id: str, project_id: str) -> dict:

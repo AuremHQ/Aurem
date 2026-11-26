@@ -60,15 +60,22 @@ def edit_tier_mode() -> str:
     return v
 
 
-def resolve_model_mode(tier: str, req_mode: str, *, account_has_pro: bool = True) -> str:
+def resolve_model_mode(tier: str, req_mode: str, *, account_has_pro: bool = False) -> str:
     """`tier` is the intent-gateway classification for THIS turn
     ("casual" / "clarify" / "query" / "agentic"). `req_mode` is the
     user's selected mode pill ("swift" / "pro" / "maxx").
     `account_has_pro` — True iff the caller's ACCOUNT tier already
     includes "pro" in `subscription_tiers.allowed_modes_for_tier`
     (i.e. not being asked to upgrade to something they don't already
-    have). Defaults to True so any caller that doesn't pass it keeps
-    the original unconditional transparent-escalation behavior.
+    have). Defaults to False (FAIL-CLOSED, 2026-11-25 audit Part IX):
+    a caller that forgets to pass it no longer silently escalates a
+    free account to Pro — the mode stays Swift and the caller must
+    show the upgrade offer instead. The sole production caller
+    (routers/chat_pre_llm.py) passes the flag explicitly, so it is
+    unaffected by the flip.
+
+    Inputs are normalized (strip + lower) so "Agentic" / " Swift "
+    behave like "agentic" / "swift" — mirroring edit_tier_mode().
 
     Returns the mode to actually pass to the model call — escalated
     to "pro" for a real edit (agentic tier) landing on Swift, EXCEPT
@@ -76,6 +83,8 @@ def resolve_model_mode(tier: str, req_mode: str, *, account_has_pro: bool = True
     that case the mode stays "swift" and the caller must show
     `UPGRADE_OFFER_MESSAGE` instead of running the edit
     (`needs_edit_upgrade_offer` tells the caller when to do that)."""
+    tier = (tier or "").strip().lower()
+    req_mode = (req_mode or "").strip().lower()
     if tier != "agentic" or req_mode != "swift":
         return req_mode
     if account_has_pro or edit_tier_mode() == EDIT_TIER_MODE_TRANSPARENT:
@@ -83,11 +92,16 @@ def resolve_model_mode(tier: str, req_mode: str, *, account_has_pro: bool = True
     return req_mode
 
 
-def needs_edit_upgrade_offer(tier: str, req_mode: str, *, account_has_pro: bool = True) -> bool:
+def needs_edit_upgrade_offer(tier: str, req_mode: str, *, account_has_pro: bool = False) -> bool:
     """True iff this turn is a real edit (agentic) on the Swift pill,
     the account has no Pro access, AND gated mode (Path B) is active —
     the caller should show `UPGRADE_OFFER_MESSAGE` instead of running
-    the edit attempt on Swift."""
+    the edit attempt on Swift. Defaults to False (FAIL-CLOSED,
+    2026-11-25 audit Part IX): an omitted flag now means "no Pro",
+    so the offer fires instead of silently escalating. Inputs are
+    normalized (strip + lower), mirroring edit_tier_mode()."""
+    tier = (tier or "").strip().lower()
+    req_mode = (req_mode or "").strip().lower()
     if account_has_pro:
         return False
     if tier != "agentic" or req_mode != "swift":

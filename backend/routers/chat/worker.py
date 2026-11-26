@@ -386,7 +386,14 @@ async def _mode_d_e(state: StreamState, _mode: str) -> Optional[dict]:
                         for t in _tree
                         if t.get("type") == "blob" and t.get("path")
                     ][:400]
-            # Read the top ~8 most-relevant files for the audit
+            # Read the top ~8 most-relevant files for the audit.
+            # P0 audit fix (2026-11-25, B3) — fetch_file() takes 5
+            # args (owner, repo, path, ref, token); this call used to
+            # pass a stray httpx client first (6 args), so every call
+            # raised TypeError, the `except: pass` below swallowed it,
+            # and the audit ran on ZERO file contents while still
+            # reporting success. No client is needed here at all —
+            # fetch_file opens its own.
             _prio = [
                 p for p in file_tree
                 if any(p.endswith(ext) for ext in
@@ -395,13 +402,12 @@ async def _mode_d_e(state: StreamState, _mode: str) -> Optional[dict]:
                      or "model" in p or "main" in p
                      or "App" in p or "index" in p)
             ][:8] or file_tree[:8]
-            async with _httpx.AsyncClient(timeout=20.0) as _gc:
-                for _p in _prio:
-                    _content = await _gh_fetch(
-                        _gc, repo_own, repo_nm, _p, branch_h, pat,
-                    )
-                    if _content:
-                        file_blocks[_p] = _content
+            for _p in _prio:
+                _content = await _gh_fetch(
+                    repo_own, repo_nm, _p, branch_h, pat,
+                )
+                if _content:
+                    file_blocks[_p] = _content
         except Exception:
             pass
     try:
@@ -816,6 +822,9 @@ async def _prep_pre_llm(state: StreamState) -> dict:
         # before this function's caller even ran; reuse it instead of
         # calling the real read_repo_file tool a second time.
         precomputed_required_read_gate=state.required_read_gate,
+        # P0 audit fix (2026-11-25, D1) — client timezone for the
+        # casual-reply clock block.
+        user_tz=getattr(state, "user_tz", None),
     )
     _intent_result = _pre.intent_result
     _tier = _pre.tier
@@ -1145,7 +1154,20 @@ async def _advisor_panel(state: StreamState, intent_result: dict, tier: str) -> 
         "text as if it were run status, PR state, or "
         "token data."
     )
-    _sys_for_advisor = (state.extra_sys or "") + _adv_directive + _ctx_block + _vision_block
+    # P0 audit fix (2026-11-25, D2) — dynamic clock for the advisor
+    # panel. This path bypasses chat_with_tools entirely, so it never
+    # gets the base-system clock injected there; inject the SAME reused
+    # build_runtime_context block here instead. Fail-open, like the
+    # casual path: a clock failure must never break an advisor turn.
+    try:
+        from services.ora_chat.safety import build_runtime_context as _brc_adv
+        _adv_clock = _brc_adv(getattr(state, "user_tz", None))
+    except Exception:                                          # noqa: BLE001
+        _adv_clock = ""
+    _sys_for_advisor = (
+        (_adv_clock + "\n\n" if _adv_clock else "")
+        + (state.extra_sys or "") + _adv_directive + _ctx_block + _vision_block
+    )
     state.sys_for_advisor = _sys_for_advisor
 
     # Direct LLM call — bypass the tool loop entirely.
@@ -1250,6 +1272,9 @@ async def _run_orchestrator(state: StreamState, req_mode_stream: str, max_iters_
         is_founder=state.is_founder,
         bin_ctx=bin_ctx,
         task_state_scope_files=((state.task_state or {}).get("scope") or {}).get("files"),
+        # P0 audit fix (2026-11-25, D2) — client timezone for the
+        # base-system clock block.
+        user_tz=getattr(state, "user_tz", None),
     )
     # Snapshot final invocations so a late timeout still has data.
     if isinstance(result, dict):

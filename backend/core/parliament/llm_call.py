@@ -118,17 +118,23 @@ async def _llm_call_protected_impl(*, system: str, user: str, max_tokens: int,
                         system=system, user=user, max_tokens=max_tokens,
                         mode=mode, user_id=user_id, review_mode=review_mode,
                     )
-                    try:
-                        meta = await asyncio.wait_for(
-                            call_llm_with_meta(temperature=temperature, **kwargs),
-                            timeout=ParliamentCircuitBreaker.TIMEOUT_PER_CALL,
-                        )
-                    except TypeError:
-                        # Older signature without temperature kwarg.
-                        meta = await asyncio.wait_for(
-                            call_llm_with_meta(**kwargs),
-                            timeout=ParliamentCircuitBreaker.TIMEOUT_PER_CALL,
-                        )
+                    # Part X fix 6 — single call, temperature threaded
+                    # through for real (services/llm/_meta.py now
+                    # accepts it).  The old `except TypeError` retry
+                    # was the LIVE path on every call — the callee
+                    # took no `temperature` parameter at all, so the
+                    # first attempt raised TypeError before any LLM
+                    # work and caller temperature was silently
+                    # dropped on every parliament call.  The bare
+                    # `except TypeError` ALSO masked genuine internal
+                    # TypeErrors (a bug in provider code retried the
+                    # whole call once).  Both are gone: an internal
+                    # TypeError now falls to the `except Exception`
+                    # below and is recorded as a failure, not retried.
+                    meta = await asyncio.wait_for(
+                        call_llm_with_meta(temperature=temperature, **kwargs),
+                        timeout=ParliamentCircuitBreaker.TIMEOUT_PER_CALL,
+                    )
                 except asyncio.TimeoutError:
                     latency_ms = round((time.monotonic() - t0) * 1000, 1)
                     _GLOBAL_BREAKER.record_failure(latency_ms, kind="timeout")
@@ -150,7 +156,15 @@ async def _llm_call_protected_impl(*, system: str, user: str, max_tokens: int,
             # "budget exhausted" apart from a generic empty/error response —
             # this is NOT a circuit-breaker-worthy failure (it's not the
             # provider being unhealthy), so skip recording it there.
+            # Part X fix 5 — but DO record it as NEUTRAL: with no
+            # recording at all, a cost-cap hit on a half-open probe
+            # call left `_half_open_probe=True` forever (the only
+            # resets are record_success/record_failure), wedging the
+            # breaker in half_open for the whole cap episode.
+            # record_neutral releases the probe without counting the
+            # cap as a provider failure.
             if isinstance(meta, dict) and meta.get("error_code") == "COST_CAP_REACHED":
+                _GLOBAL_BREAKER.record_neutral(latency_ms)
                 span.set_metadata({"latency_ms": latency_ms, "error": "cost_cap_reached"})
                 span.record_error("cost_cap_reached")
                 return "", latency_ms, "cost_cap_reached"
@@ -158,7 +172,11 @@ async def _llm_call_protected_impl(*, system: str, user: str, max_tokens: int,
                 for k in ("model", "provider", "total_tokens"):
                     if meta.get(k) is not None:
                         _meta_sink[k] = meta[k]
-            content = (meta or {}).get("content", "") or ""
+            # Part X fix 7 — guard the content read like L153/L157/L174
+            # already do: a truthy non-dict `meta` (a mocked/future
+            # provider returning a bare string) used to crash here
+            # with AttributeError ('str' has no .get).
+            content = (meta.get("content", "") or "") if isinstance(meta, dict) else ""
             if not content.strip():
                 _GLOBAL_BREAKER.record_failure(latency_ms, kind="empty")
                 span.set_metadata({"latency_ms": latency_ms, "error": "empty"})

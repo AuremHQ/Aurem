@@ -106,7 +106,15 @@ export default function LiveTaskPopup({ taskId, onClose, onDone }) {
         const t = r?.data?.task;
         if (!cancelled && t) {
           setTask(t);
-          if (t.status === "done") {
+          // P0 audit fix (claim #7) — "completed" is terminal too:
+          // the TERMINAL set below already includes it, but the
+          // done-path used to fire only on "done", so a task that
+          // completed left the popup polling-stopped with no onDone
+          // (no edited_files attached) and no 5s dismiss — stuck on
+          // screen. (onDoneFiredRef itself is NOT touched: the
+          // key={livePopupTaskId} remount in ChatPanel already
+          // resets it per task.)
+          if (t.status === "done" || t.status === "completed") {
             // Iter 388g — one-shot done callback with the full task
             // payload (includes edited_files hunks written by the
             // worker on completion). Fire before starting the 5s

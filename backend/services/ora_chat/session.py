@@ -158,13 +158,40 @@ async def append_message(session_id: str, user_id: str, *,
     return r.matched_count > 0
 
 
-def _estimate_tokens(text: str) -> int:
+def _content_text(content) -> str:
+    """Normalise message content to plain text for token estimation.
+    OpenAI multimodal content is a LIST of parts — len(list) is the
+    PART count, not the text length (2026-11-25 audit Part IX F(c4),
+    same flaw as engine._history_turns). Join the text parts; image
+    parts contribute a fixed token charge instead."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, dict) and p.get("type") == "text":
+                parts.append(p.get("text") or "")
+            elif isinstance(p, dict) and p.get("type") in ("image_url", "image"):
+                parts.append("[image]")
+        return "\n".join(parts)
+    return str(content or "")
+
+
+def _estimate_tokens(text) -> int:
     """Conservative char→token estimate. Used to decide when to fold
     older turns into the summary. Never exact — a small over-count is
     fine (triggers summarize a little early); under-count is
-    dangerous (overflows the context window)."""
+    dangerous (overflows the context window). Accepts str or
+    multimodal list content: a list counts its TEXT length plus a
+    fixed ~1000 tokens per image part, never the part count."""
     if not text:
         return 0
+    if isinstance(text, list):
+        n_images = sum(
+            1 for p in text
+            if isinstance(p, dict) and p.get("type") in ("image_url", "image")
+        )
+        return int(len(_content_text(text)) / CHARS_PER_TOKEN) + 1 + 1000 * n_images
     return int(len(text) / CHARS_PER_TOKEN) + 1
 
 
@@ -273,7 +300,7 @@ async def maybe_update_summary(session_id: str, user_id: str) -> None:
         if not isinstance(m, dict):
             continue
         role = m.get("role", "")
-        content = (m.get("content") or "").strip().replace("\n", " ")
+        content = _content_text(m.get("content")).strip().replace("\n", " ")
         if not content:
             continue
         parts.append(f"{role.upper()}: {content[:1200]}")

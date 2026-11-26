@@ -10,7 +10,7 @@ import os
 import time
 from typing import Optional
 
-from fastapi import Header
+from fastapi import Header, Request
 from pydantic import BaseModel, Field, validator
 
 from cto_services.auth import current_dev
@@ -31,7 +31,7 @@ from services.chat_helpers import (
 from services.user_response_sanitizer import sanitize_provider_for_user
 
 from . import router
-from .misc import PLAIN_ENGLISH_EXPLAIN_CONTRACT, BUSINESS_OWNER_VOICE_CONTRACT
+from .misc import PLAIN_ENGLISH_EXPLAIN_CONTRACT, BUSINESS_OWNER_VOICE_CONTRACT, business_voice_applies
 
 logger = logging.getLogger(__name__)
 
@@ -300,8 +300,15 @@ async def _chat_send_prepare_preflight_context(repo_ctx, brain_ctx, body, user):
     return (t_preflight, extra_sys, _council_recalled, _council_block, _recall_mode_send)
 
 
-async def _chat_send_prepare_panel_and_resolve_mode(body, user, _db, extra_sys):
-    if not body.ora_panel:
+async def _chat_send_prepare_panel_and_resolve_mode(body, user, _db, extra_sys, recall_mode=None):
+    # P0 audit fix (2026-11-25, B5) — the voice contract is scoped to
+    # non-technical turns via business_voice_applies() (see misc.py):
+    # code/debug/audit turns (recall modes C/D/E) and loop-execution
+    # turns never get it. `recall_mode` is classify_intent()'s
+    # taxonomy, computed once by the preflight step and passed in.
+    if not body.ora_panel and business_voice_applies(
+        recall_mode, getattr(body, "execution_mode", None),
+    ):
         extra_sys = (extra_sys + "\n\n" + BUSINESS_OWNER_VOICE_CONTRACT).strip()
     # Iter 212m-24 — Admin House Rules (HIGHEST PRIORITY).
     # If the admin has enabled house rules for `chat` + the requested
@@ -656,9 +663,24 @@ async def _chat_send_detect_plain_english(body, _recall_mode_send, user, extra_s
 async def chat_send(
     body: ChatBody,
     authorization: Optional[str] = Header(None),
+    # P0 audit fix (2026-11-25, D1/D2) — Request is optional-with-
+    # default so direct (non-HTTP) callers keep working; FastAPI
+    # still injects the real request on HTTP calls. Only used to read
+    # the X-Client-TZ header for the clock blocks below.
+    request: Optional[Request] = None,
 ) -> dict:
     """Non-streaming chat — returns full response, persists turn.
     If maxx_mode=True, runs Emergent watchdog review after DeepSeek reply."""
+    # P0 audit fix (2026-11-25, D1/D2) — validated client timezone,
+    # same _valid_tz whitelist as the v2 /message path (#373).
+    try:
+        from routers.ora_chat import _valid_tz as _valid_tz_send
+        _user_tz = (
+            _valid_tz_send(request.headers.get("x-client-tz"))
+            if request is not None else None
+        )
+    except Exception:                                          # noqa: BLE001
+        _user_tz = None
     user, finalize, interaction_request_id, _mock_llm_on = await _chat_send_authenticate_and_tag_request(authorization, body)
     # Fix #14 (2026-11-18): Ask Advisor (ora_panel=True or agent='ora') must never
     # take the mock path -- it always goes to the real advisor in worker.py
@@ -746,7 +768,9 @@ async def chat_send(
 
     # 2026-08-31 · Business-Owner Voice Contract — every non-ora_panel
     # turn, not flag-gated (see BUSINESS_OWNER_VOICE_CONTRACT docstring).
-    extra_sys, _allowed, req_mode, _wants_maxx = await _chat_send_prepare_panel_and_resolve_mode(body, user, _db, extra_sys)
+    # P0 audit fix (2026-11-25, B5) — scoped inside
+    # _chat_send_prepare_panel_and_resolve_mode via business_voice_applies().
+    extra_sys, _allowed, req_mode, _wants_maxx = await _chat_send_prepare_panel_and_resolve_mode(body, user, _db, extra_sys, recall_mode=_recall_mode_send)
     # Iter 212m-168 — surface founder/admin role to the orchestrator so
     # only these accounts see `execute_bash` (local pod filesystem).
     from services.usage import is_founder_email as _is_fnd_email
@@ -778,6 +802,9 @@ async def chat_send(
         session_summary=_session_summary,
         allowed_modes=_allowed, req_mode=req_mode,
         ora_panel=bool(body.ora_panel),
+        # P0 audit fix (2026-11-25, D1) — client timezone for the
+        # casual-reply clock block.
+        user_tz=_user_tz,
     )
     result = _pre.result
     _intent_result = _pre.intent_result
@@ -817,6 +844,9 @@ async def chat_send(
                     is_founder=_is_fnd,
                     bin_ctx=bin_ctx,
                     task_state_scope_files=((_pre.task_state or {}).get("scope") or {}).get("files"),
+                    # P0 audit fix (2026-11-25, D2) — client timezone
+                    # for the base-system clock block.
+                    user_tz=_user_tz,
                 ),
                 timeout=_hard_timeout_s,
             )

@@ -110,7 +110,7 @@ async def _recent_loop_failures_7d(db) -> dict:
         return {"count": 0, "last_error_class": None}
 
 
-async def build_state_block(db) -> str:
+async def build_state_block(db, user_tz: str | None = None) -> str:
     prod, funnel, alerts, blockers, backlog, loop_fail = (
         await _production_status(db),
         await _funnel_7d(db),
@@ -119,9 +119,22 @@ async def build_state_block(db) -> str:
         await _parked_backlog(db),
         await _recent_loop_failures_7d(db),
     )
+    # P0 audit fix (2026-11-25, D3 residual) — state_as_of used to be
+    # UTC-only even though the router already passes the user's
+    # timezone into the turn (engine.py passes user_tz through). Render
+    # it in the user's zone, with the zone name attached so the stamp
+    # is unambiguous. Invalid/missing zone → UTC, never break the turn
+    # over a clock.
+    try:
+        from zoneinfo import ZoneInfo
+        _tz = ZoneInfo(user_tz) if user_tz else timezone.utc
+        _tz_name = user_tz if user_tz else "UTC"
+    except Exception:                                          # noqa: BLE001
+        _tz, _tz_name = timezone.utc, "UTC"
+    _state_as_of = datetime.now(timezone.utc).astimezone(_tz)
     lines = [
         STATE_OPEN,
-        f"state_as_of: {datetime.now(timezone.utc).isoformat()}",
+        f"state_as_of: {_state_as_of.isoformat()} ({_tz_name})",
         f"production: build_hash={prod['build_hash']} db_ok={prod['db_ok']}",
         (f"funnel_7d: stalls_flagged={funnel.get('stalls_flagged', 0)} "
          f"stalls_resolved={funnel.get('stalls_resolved', 0)} "

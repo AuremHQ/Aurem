@@ -561,7 +561,13 @@ _MAX_CONSECUTIVE_SAME_TOOL_NO_PROGRESS = 4
 # count. This is the unconditional backstop: no more than
 # `_MAX_CALLS_PER_TOOL_PER_TURN` calls to the exact same tool NAME in
 # one turn, success or failure, full stop.
-_MAX_CALLS_PER_TOOL_PER_TURN = 3
+# P0 audit fix (2026-11-25, B4) — was 3, but the tool-help template
+# below explicitly tells the model to emit 7+ `read_repo_file` blocks
+# in one turn ("if you need 7+, emit SEPARATE `read_repo_file` blocks
+# back-to-back"), so following the template tripped this guard
+# mid-turn. Raised to 10 so the template's 7+ guidance fits inside
+# the cap with headroom; the max_iters budget still bounds the turn.
+_MAX_CALLS_PER_TOOL_PER_TURN = 10
 
 
 def _tool_call_counts(invocations: list[dict]) -> dict:
@@ -2086,7 +2092,7 @@ async def _chat_with_tools_build_extra_context(system, is_founder, project_id, b
     return extra
 
 
-async def _chat_with_tools_build_base_system(prompt, extra, history_lines, catalog_text, project_id, tools):
+async def _chat_with_tools_build_base_system(prompt, extra, history_lines, catalog_text, project_id, tools, user_tz=None):
     try:
         from services.ora_learning import _extract_file_paths as _xfp
         _scope_paths = _xfp((prompt or "") + " " + (extra or ""))
@@ -2099,6 +2105,21 @@ async def _chat_with_tools_build_base_system(prompt, extra, history_lines, catal
 
     layered_persona = build_persona(prompt, extra, history_lines)
     base_system = layered_persona + (("\n\n" + extra) if extra.strip() else "")
+    # P0 audit fix (2026-11-25, D2) — dynamic clock. This base system
+    # used to be persona + extra + SECURITY + MEMORY only, with no
+    # date/time anywhere, so the model answered "what time is it" from
+    # memory. Prepend the SAME reused build_runtime_context block the
+    # v2 /message path appends since #373 (services/ora_chat/safety.py)
+    # — no new helper invented. `user_tz` is the validated X-Client-TZ
+    # value threaded from the router; None → ORA_USER_TZ / Toronto
+    # fallback inside the helper. Fail-open: never break a turn over
+    # a clock. Both first-iter and follow-up systems derive from
+    # base_system, so both carry the clock.
+    try:
+        from services.ora_chat.safety import build_runtime_context
+        base_system = build_runtime_context(user_tz) + "\n\n" + base_system
+    except Exception as _ckx:                                  # noqa: BLE001
+        logger.debug("runtime clock inject skipped: %r", _ckx)
     # SEC-006 hardening (2026-08-19): repo files, fetched web pages, and
     # prior-turn tool output are concatenated into the transcript as
     # plain text (see "=== TOOL RESULTS ===" blocks below) — content
@@ -2586,6 +2607,11 @@ async def chat_with_tools(
                                         # talk its way around: write_repo_file
                                         # / patch_repo_file are blocked
                                         # unconditionally for the whole run.
+    user_tz=None,                       # P0 audit fix (2026-11-25, D2) —
+                                        # validated X-Client-TZ value from the
+                                        # router; threaded into the base-system
+                                        # clock block. None → env / Toronto
+                                        # fallback inside build_runtime_context.
 ) -> dict:
     """Run the LLM tool-call loop until final answer (no more tool calls)
     or `max_iters` cap is hit.  Every tool call goes through `tools_bridge`
@@ -2753,7 +2779,7 @@ async def chat_with_tools(
     # Pull file paths from the prompt + accumulated extra context, and
     # append per-language guardrails. Cheap (no I/O) so runs for every
     # turn including `home` project.
-    first_iter_system, followup_iter_system = await _chat_with_tools_build_base_system(prompt, extra, history_lines, catalog_text, project_id, tools)
+    first_iter_system, followup_iter_system = await _chat_with_tools_build_base_system(prompt, extra, history_lines, catalog_text, project_id, tools, user_tz=user_tz)
 
     # iter 322fk-4 / 2026-08-30 (Issue C, F1+F2): stitch session memory
     # into the transcript. F1 — dynamic, token-budgeted window sized

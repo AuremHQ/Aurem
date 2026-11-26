@@ -115,6 +115,7 @@ class _CouncilMember:
         score = _score_output(
             out,
             task_type=context.get("task_type", "code_fix"),
+            file_path=context.get("file_path"),
         )
         return {
             "member":     self.name,
@@ -143,11 +144,34 @@ class _Council:
         for m in self.members:
             logger.info("Council %s member %s called — temp %.1f",
                         self.name, m.name, m.temperature)
-        votes = await asyncio.gather(
+        # Part XII group 1 (c) — return_exceptions=True so one
+        # member's UNEXPECTED failure (an exception escaping
+        # cast_vote — ordinary LLM errors already return a 0.0 error
+        # dict) cannot abort the whole vote. A failed member scores
+        # 0.0 in the same dict shape cast_vote returns, and the CEO
+        # still decides on the surviving members.
+        results = await asyncio.gather(
             *[m.cast_vote(task=task, context=context) for m in self.members],
-            return_exceptions=False,
+            return_exceptions=True,
         )
-        return list(votes)
+        votes: list[dict] = []
+        for member, result in zip(self.members, results):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "Council %s member %s failed to vote: %r",
+                    self.name, member.name, result,
+                )
+                votes.append({
+                    "member":     member.name,
+                    "output":     "",
+                    "score":      0.0,
+                    "error":      f"{type(result).__name__}: {result}",
+                    "latency_ms": 0.0,
+                    "temp":       member.temperature,
+                })
+            else:
+                votes.append(result)
+        return votes
 
 
 _COUNCIL_A_PERSONA = (

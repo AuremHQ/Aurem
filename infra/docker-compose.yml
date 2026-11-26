@@ -12,7 +12,10 @@
 services:
   api:
     build:
-      context: ./api
+      # Part VII fix 5(a) — contexts are relative to THIS file (infra/),
+      # so ./api meant infra/api, which never existed. The Dockerfiles
+      # live in backend/ and frontend/ at the repo root.
+      context: ../backend
       dockerfile: Dockerfile
     container_name: aurem-cto-api
     restart: unless-stopped
@@ -26,7 +29,10 @@ services:
       - OUTBOX_DB_PATH=/data/outbox.sqlite3
     volumes:
       - ./data:/data
-      - ./api:/app:ro
+      # Part VII fix 5(a) — was ./api:/app:ro (infra/api, nonexistent).
+      # Live-mounts the backend source over /app (read-only) so the
+      # container runs the same code the image was built from.
+      - ../backend:/app:ro
     networks:
       - aurem-cto-net
     # iter 326m-stab — api holds the Atlas mongo pool + outbound HTTP
@@ -47,7 +53,8 @@ services:
 
   ui:
     build:
-      context: ./ui
+      # Part VII fix 5(a) — was ./ui (infra/ui, nonexistent).
+      context: ../frontend
       dockerfile: Dockerfile
     container_name: aurem-cto-ui
     restart: unless-stopped

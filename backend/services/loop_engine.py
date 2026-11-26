@@ -423,6 +423,15 @@ class LoopEngine:
         self.used_maxx: bool = False
         self.used_parallel_agents: bool = False
         self.agent_count: int = 0
+        # Findings fix 2026-11-25 — user mode pill (swift/pro/maxx),
+        # set from the router when the request specifies it (same
+        # pattern as used_maxx above). None = unknown → full Council
+        # always. "swift"/"pro" → single-model first attempt for
+        # code_fix files (see should_use_single_model); "maxx" →
+        # full Council. The router wiring (routers/loop.py reading
+        # the pill) is a follow-up — until it lands this stays None
+        # and behaviour is unchanged.
+        self.mode: Optional[str] = None
         # Iter 332 — stall detector ring: last N narration keys. If the
         # same 3-key sequence repeats twice back-to-back, auto-abort.
         self._narration_ring: list = []
@@ -1402,7 +1411,7 @@ class LoopEngine:
                 )
                 plan_title = plan.get("title", "")
 
-                async def _gen_via_parliament(path):
+                async def _gen_via_parliament(path, attempt: int = 1):
                     async with sem:
                         # Iter 276 — emit a REAL per-file event before
                         # entering the Parliament call so the frontend
@@ -1623,6 +1632,20 @@ class LoopEngine:
                             # frames — this cleanup was demanded
                             # after the founder observed two
                             # heartbeat loops racing per file.
+                            # Findings fix 2026-11-25 — single-model
+                            # shortcut: swift/pro first attempt runs one
+                            # call instead of the 3-member vote (see
+                            # should_use_single_model). Maxx, retry
+                            # attempts, and unknown modes keep the full
+                            # Council. Imported lazily like Parliament
+                            # itself so module import stays light.
+                            from core.parliament.routing import (
+                                should_use_single_model as _should_single,
+                            )
+                            _single_model = _should_single(
+                                mode=self.mode, task_type="code_fix",
+                                attempt=attempt,
+                            )
                             result = await asyncio.wait_for(
                                 _parliament.run(
                                     task=task_text,
@@ -1639,6 +1662,10 @@ class LoopEngine:
                                         "task_type":       "code_fix",
                                         "loop_session_id": self.loop_id,
                                         "user_id":         self.user_id,
+                                        # Findings fix 2026-11-25 —
+                                        # single-model shortcut flag
+                                        # (False = full Council).
+                                        "single_model":    _single_model,
                                         # Iter 362 · Bug A · dynamic
                                         # output budget threaded to
                                         # Council A members via
@@ -1847,7 +1874,7 @@ class LoopEngine:
                 async def _gen_with_bounded_retry(path):
                     last_result = None
                     for attempt in range(1, _MAX_ARTIFACT_ATTEMPTS + 1):
-                        last_result = await _gen_via_parliament(path)
+                        last_result = await _gen_via_parliament(path, attempt=attempt)
                         if last_result:
                             return last_result
                         if attempt < _MAX_ARTIFACT_ATTEMPTS:
@@ -2838,7 +2865,7 @@ class LoopEngine:
             edit — no LLM roundtrip.
           • DUPLICATES across scanners are merged.
           • DEFERRED items go to backlog, not to a wasteful rewrite.
-          • Only REAL_BUG findings hit Parliament.heal.
+          • Only REAL_BUG findings hit Parliament.healer.heal.
         """
         from services.fix_triage import apply_triage_before_heal
         healed_any = False
@@ -2938,14 +2965,28 @@ class LoopEngine:
             try:
                 from core.parliament import Parliament as _P
                 _parl = _P(db=self.db)
-                heal_result = await _parl.heal(
+                # Findings fix 2026-11-25 — Parliament has NO `heal`
+                # method, so the old call raised AttributeError (swallowed
+                # by the except below) and full-scan heal silently never
+                # ran. Use the healer the verify phase uses
+                # (`_parl.healer.heal`, SelfHeal.heal), with the same
+                # {output, score, error} attempt shape and the
+                # {"status": "retry", "output": ...} contract — NOT the
+                # invented file_path/current_content/last_error kwargs
+                # or the "content" key the old code read back.
+                heal_result = await _parl.healer.heal(
                     task=heal_task,
-                    file_path=path,
-                    current_content=target.get("content") or "",
-                    last_error="\n".join(error_lines),
-                    user_id=self.user_id,
+                    all_attempts=[{
+                        "output": target.get("content") or "",
+                        "score":  0.0,
+                        "error":  "\n".join(error_lines),
+                    }],
+                    round_num=0,
+                    max_rounds=MAX_SELF_HEALS,
                 )
-                new_content = (heal_result or {}).get("content") or ""
+                new_content = ""
+                if (heal_result or {}).get("status") == "retry":
+                    new_content = heal_result.get("output") or ""
                 if new_content and new_content != target.get("content"):
                     with contextlib.suppress(Exception):
                         await record_backup(

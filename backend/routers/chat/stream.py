@@ -31,7 +31,7 @@ from services.chat_helpers import (
 )
 from .misc import (
     PLAIN_ENGLISH_EXPLAIN_CONTRACT, BUSINESS_OWNER_VOICE_CONTRACT,
-    ORA_PANEL_TONE,
+    ORA_PANEL_TONE, business_voice_applies,
 )
 from .turn import ChatBody
 from . import router
@@ -482,7 +482,13 @@ async def _chat_stream_setup_plain_english_panel(_r10_council_t0, _recall_mode, 
 
     # 2026-08-31 · Business-Owner Voice Contract — every non-ora_panel
     # turn, not flag-gated (see BUSINESS_OWNER_VOICE_CONTRACT docstring).
-    if not body.ora_panel:
+    # P0 audit fix (2026-11-25, B5) — scoped to non-technical turns
+    # via business_voice_applies(): code/debug/audit turns (recall
+    # modes C/D/E) and loop-execution turns never get it, so it can no
+    # longer ban commit/push/deploy/repo/file/API from a code task.
+    if not body.ora_panel and business_voice_applies(
+        _recall_mode, getattr(body, "execution_mode", None),
+    ):
         extra_sys = (extra_sys + "\n\n" + BUSINESS_OWNER_VOICE_CONTRACT).strip()
 
     # Iter 212m-24 — Admin House Rules (HIGHEST PRIORITY).
@@ -567,6 +573,16 @@ async def chat_stream(
 ):
     """SSE token-streaming chat. Iter 45: rate-limited to 30 req/min per IP.
     Iter 50.1: founders / unlimited accounts bypass the rate-limit."""
+    # P0 audit fix (2026-11-25, D1/D2) — validated client timezone,
+    # same _valid_tz whitelist as the v2 /message path (#373).
+    # Threaded via StreamState.user_tz to the casual reply, the
+    # advisor panel, and the orchestrator base-system clock. Invalid /
+    # absent header → None → env / Toronto fallback downstream.
+    try:
+        from routers.ora_chat import _valid_tz as _valid_tz_stream
+        _user_tz = _valid_tz_stream(request.headers.get("x-client-tz"))
+    except Exception:                                          # noqa: BLE001
+        _user_tz = None
     _r10_turn_t0, user, finalize, interaction_request_id = await _chat_stream_authenticate_and_tag_request(body, authorization)
     # Overnight loop W2 Step 2 (2026-08-29) — MOCK_LLM short-circuit,
     # BEFORE any provider routing/tool/repo-context construction. The
@@ -817,7 +833,7 @@ async def chat_stream(
         state = StreamState(
             request=request, body=body, authorization=authorization,
             user=user, user_id=user_id, jwt_token=jwt_token,
-            pid_stream=_pid_stream,
+            pid_stream=_pid_stream, user_tz=_user_tz,
             bin_ctx=bin_ctx, repo_ctx=repo_ctx, brain_ctx=brain_ctx,
             extra_sys=extra_sys, council_recalled=_council_recalled,
             council_block=_council_block, recall_mode=_recall_mode,

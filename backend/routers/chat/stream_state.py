@@ -30,6 +30,12 @@ class StreamState:
     user_id: str
     jwt_token: str
     pid_stream: str
+    # P0 audit fix (2026-11-25, D1/D2) — validated X-Client-TZ value
+    # read by chat_stream(); threaded to resolve_pre_llm() (casual
+    # clock), _advisor_panel (advisor clock) and chat_with_tools()
+    # (base-system clock). None → env / Toronto fallback in
+    # build_runtime_context.
+    user_tz: Optional[str] = None
 
     # ── Context built before gen() (immutable once set) ──
     bin_ctx: Any = None

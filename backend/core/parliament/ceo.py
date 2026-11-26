@@ -13,9 +13,15 @@ import time
 from typing import Optional
 
 from . import llm_call as _llm_call_mod
-from .scoring import detect_output_type, CEO_TEMPS
+from .scoring import detect_output_type, CEO_TEMPS, _syntax_invalid
 
 logger = logging.getLogger("aurem-dev.parliament")
+
+# Part XII group 1 (d1) — judge excerpt budget: first 800 + last 800
+# chars per candidate (was: first 800 only). The tail is where
+# truncation breakage shows, so it must never be the part cut off.
+_EXCERPT_HEAD = 800
+_EXCERPT_TAIL = 800
 
 
 class CEO:
@@ -68,6 +74,30 @@ class CEO:
                 "ceo_temp_value": ceo_temp,
                 **({"error_code": "COST_CAP_REACHED"} if _all_cost_capped else {}),
             }
+        # Findings fix 2026-11-25 — defence in depth. Drop code_fix
+        # candidates that are PROVABLY broken (Python that fails
+        # compile(), JS that fails node --check) before picking a
+        # winner, so a stale or bypassed high score can never
+        # auto-pass broken code. Unverified languages (TS/JSX/Go/...)
+        # are NOT dropped here — they stay in the judge pool, and
+        # _score_output already caps them below the floor.
+        if context.get("task_type") == "code_fix":
+            usable = [v for v in usable
+                      if not _syntax_invalid(
+                          v.get("output") or "",
+                          file_path=context.get("file_path"))]
+            if not usable:
+                return {
+                    "status":         "manual_review",
+                    "output":         None,
+                    "winner":         None,
+                    "scores":         scores,
+                    "ceo_picked":     False,
+                    "reasoning":      ("All code_fix candidates failed "
+                                       "the syntax gate."),
+                    "ceo_temp_key":   output_type,
+                    "ceo_temp_value": ceo_temp,
+                }
         # Heuristic pick: best score, ties broken by lowest temperature.
         usable.sort(key=lambda v: (-v["score"], v["temp"]))
         winner = usable[0]
@@ -129,8 +159,22 @@ class CEO:
         if not candidates:
             return None
 
+        # Part XII group 1 (d1) — the old excerpt was the first 800
+        # chars only, so the judge never saw a candidate's tail —
+        # exactly where truncation / unclosed-brace breakage lives —
+        # yet decide() returned the chosen candidate's FULL output.
+        # Head+tail: the tail always survives, with an explicit
+        # omission marker so the judge knows the middle was cut.
         def _excerpt(s):
-            return (s or "")[:800]
+            s = s or ""
+            if len(s) <= _EXCERPT_HEAD + _EXCERPT_TAIL:
+                return s
+            omitted = len(s) - _EXCERPT_HEAD - _EXCERPT_TAIL
+            return (
+                s[:_EXCERPT_HEAD]
+                + f"\n[... {omitted} chars omitted ...]\n"
+                + s[-_EXCERPT_TAIL:]
+            )
 
         choices_text = "\n\n".join(
             f"--- CANDIDATE {i} (member={c['member']}, score={c['score']:.2f}) ---\n"

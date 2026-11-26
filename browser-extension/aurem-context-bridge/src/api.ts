@@ -2,6 +2,25 @@
  * src/api.ts — thin fetch wrapper for this extension's two backend
  * calls: login (reuses AUREM's existing JWT auth, no new backend
  * credential storage) and the context-bridge POST.
+ *
+ * Part VII fixes:
+ *  - 4(a) MFA: /auth/login returns { mfa_required, mfa_token } for
+ *    MFA-protected admins; login() now returns that challenge instead
+ *    of throwing "use an account without 2FA", and verifyMfa()
+ *    trades the 5-minute mfa_pending token + TOTP/backup code for the
+ *    real session JWT at /auth/login/2fa-verify. No fake endpoint —
+ *    both legs are the backend's existing Iter 212m-20 flow.
+ *  - 4(b) Token storage: the JWT now lives in chrome.storage.session
+ *    (cleared when the browser closes) instead of chrome.storage.local,
+ *    and getStoredAuth() drops it once its `exp` passes. This bounds
+ *    persistence — it does NOT shorten the token itself, which is still
+ *    a server-issued 7-day JWT (see FIX-REPORT.md: backend-first item).
+ *  - 4(c) The `is_admin` checks below are UX gating only. The server
+ *    enforces admin on POST /admin/ora/context-bridge itself
+ *    (routers/admin_context_bridge.py: router-level
+ *    Depends(require_admin_dep) + current_dev in the handler), so a
+ *    non-admin token is rejected server-side even if this client
+ *    check were bypassed.
  */
 const STORAGE_KEYS = {
   apiBase: "aurem_api_base",
@@ -15,16 +34,49 @@ export interface StoredAuth {
   email?: string;
 }
 
+/** Result of the first login leg. MFA accounts get a challenge instead
+ *  of a token; the popup must collect the TOTP code and call verifyMfa. */
+export interface LoginResult {
+  mfaRequired: boolean;
+  /** 5-minute single-purpose token for /auth/login/2fa-verify. Kept in
+   *  popup memory only — never written to chrome.storage. */
+  mfaToken?: string;
+}
+
+/** True when the JWT's `exp` claim has passed (expiry only — the
+ *  signature is still the server's job). Unparseable tokens are
+ *  treated as expired: fail closed, force a fresh login. */
+function _tokenExpired(token: string): boolean {
+  try {
+    const payloadSegment = token.split(".")[1];
+    if (!payloadSegment) return true;
+    const json = JSON.parse(
+      atob(payloadSegment.replace(/-/g, "+").replace(/_/g, "/"))
+    );
+    const exp = json?.exp;
+    if (typeof exp !== "number") return true;
+    return Date.now() / 1000 >= exp;
+  } catch {
+    return true;
+  }
+}
+
 export async function getStoredAuth(): Promise<StoredAuth> {
-  const data = await chrome.storage.local.get([
+  const local = await chrome.storage.local.get([
     STORAGE_KEYS.apiBase,
-    STORAGE_KEYS.token,
     STORAGE_KEYS.email,
   ]);
+  // Token lives in session storage (4b) — cleared on browser restart.
+  const session = await chrome.storage.session.get([STORAGE_KEYS.token]);
+  let token: string | undefined = session[STORAGE_KEYS.token];
+  if (token && _tokenExpired(token)) {
+    await chrome.storage.session.remove([STORAGE_KEYS.token]);
+    token = undefined;
+  }
   return {
-    apiBase: data[STORAGE_KEYS.apiBase],
-    token: data[STORAGE_KEYS.token],
-    email: data[STORAGE_KEYS.email],
+    apiBase: local[STORAGE_KEYS.apiBase],
+    token,
+    email: local[STORAGE_KEYS.email],
   };
 }
 
@@ -34,11 +86,16 @@ export async function setApiBase(apiBase: string): Promise<void> {
   });
 }
 
+async function _storeSession(email: string, token: string): Promise<void> {
+  await chrome.storage.session.set({ [STORAGE_KEYS.token]: token });
+  await chrome.storage.local.set({ [STORAGE_KEYS.email]: email });
+}
+
 export async function login(
   apiBase: string,
   email: string,
   password: string
-): Promise<void> {
+): Promise<LoginResult> {
   const res = await fetch(`${apiBase}/api/aurem-dev/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -48,24 +105,60 @@ export async function login(
   if (!res.ok) {
     throw new Error(data?.detail || `Login failed (${res.status})`);
   }
+  // 4(a) — MFA challenge, not a dead end: the caller collects the
+  // TOTP/backup code and finishes via verifyMfa() below.
   if (data.mfa_required) {
-    throw new Error(
-      "MFA-protected accounts aren't supported by this extension yet — use an account without 2FA."
-    );
+    if (!data.mfa_token) {
+      throw new Error("Server asked for 2FA but returned no MFA token.");
+    }
+    return { mfaRequired: true, mfaToken: data.mfa_token };
   }
   if (!data.is_admin) {
     throw new Error(
       "This account isn't an AUREM admin/founder — the Context Bridge is admin-only."
     );
   }
-  await chrome.storage.local.set({
-    [STORAGE_KEYS.token]: data.token,
-    [STORAGE_KEYS.email]: email,
+  await _storeSession(email, data.token);
+  return { mfaRequired: false };
+}
+
+/** Second MFA leg: trade the mfa_pending token + 6-digit TOTP code
+ *  (or a backup code) for the real session JWT. Same response shape
+ *  as /auth/login, including `is_admin` — enforced here as UX gating
+ *  (the server re-enforces admin on every context-bridge call). */
+export async function verifyMfa(
+  apiBase: string,
+  email: string,
+  mfaToken: string,
+  code: string,
+  useBackupCode = false
+): Promise<void> {
+  const body: Record<string, string> = { mfa_token: mfaToken };
+  if (useBackupCode) {
+    body.backup_code = code.trim();
+  } else {
+    body.code = code.replace(/\D/g, "");
+  }
+  const res = await fetch(`${apiBase}/api/aurem-dev/auth/login/2fa-verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.detail || `2FA verification failed (${res.status})`);
+  }
+  if (!data.is_admin) {
+    throw new Error(
+      "This account isn't an AUREM admin/founder — the Context Bridge is admin-only."
+    );
+  }
+  await _storeSession(email, data.token);
 }
 
 export async function logout(): Promise<void> {
-  await chrome.storage.local.remove([STORAGE_KEYS.token, STORAGE_KEYS.email]);
+  await chrome.storage.session.remove([STORAGE_KEYS.token]);
+  await chrome.storage.local.remove([STORAGE_KEYS.email]);
 }
 
 export interface ContextBridgePayload {

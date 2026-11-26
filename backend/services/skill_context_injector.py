@@ -116,4 +116,15 @@ def build_skill_context(task_description: str) -> str:
     for name, content in picks:
         title = name.replace("-", " ").replace(".md", "").upper()
         parts.append(f"\n### {title}\n{content}")
+    # 2026-11-25 — ORA audit Part VIII: the 11 `.agents/skills` were
+    # static on disk. Append their (keyword-gated, sliced) block so
+    # all 4 call sites of this function inherit it. Fail-soft: a
+    # missing dir or import problem must never break a turn.
+    try:
+        from services.agent_skills_injector import build_agent_skill_context
+        agent_block = build_agent_skill_context(task_description)
+    except Exception:
+        agent_block = ""
+    if agent_block:
+        parts.append(f"\n{agent_block}")
     return "\n".join(parts)

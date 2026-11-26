@@ -3,9 +3,14 @@
  * Compiled to `popup.js` (see tsconfig.json, rootDir=src/outDir=.)
  * and loaded by popup.html as a plain ES module.
  */
-import { getStoredAuth, setApiBase, login, logout, sendContext } from "./api.js";
+import { getStoredAuth, setApiBase, login, verifyMfa, logout, sendContext } from "./api.js";
 import { sanitize } from "./sanitize.js";
 import { captureContext } from "./capture.js";
+// Part VII fix 4(a) — pending MFA challenge between the two login
+// legs. Memory only: the 5-minute mfa_pending token is never written
+// to chrome.storage.
+let pendingMfa = null;
+let mfaUseBackup = false;
 // How long capture.ts listens for console.error/unhandledrejection
 // after the click, before this popup auto-sends. See capture.ts's
 // docstring for why this can't be retroactive.
@@ -32,6 +37,7 @@ async function refreshView() {
     const { apiBase, token, email } = await getStoredAuth();
     hide("setup-view");
     hide("login-view");
+    hide("mfa-view");
     hide("main-view");
     if (!apiBase) {
         show("setup-view");
@@ -73,13 +79,56 @@ $("login-btn").addEventListener("click", async () => {
     if (!apiBase)
         return;
     try {
-        await login(apiBase, email, password);
+        const result = await login(apiBase, email, password);
+        if (result.mfaRequired && result.mfaToken) {
+            // 4(a) — MFA account: second leg. Keep the challenge in memory
+            // only and ask for the TOTP code instead of failing the login.
+            pendingMfa = { apiBase, email, mfaToken: result.mfaToken };
+            mfaUseBackup = false;
+            $("mfa-code-input").value = "";
+            $("mfa-code-input").placeholder = "123456";
+            $("mfa-error").classList.add("hidden");
+            hide("login-view");
+            show("mfa-view");
+            $("mfa-code-input").focus();
+            return;
+        }
         await refreshView();
     }
     catch (e) {
         errEl.textContent = e?.message || "Login failed";
         errEl.classList.remove("hidden");
     }
+});
+$("mfa-verify-btn").addEventListener("click", async () => {
+    const code = $("mfa-code-input").value.trim();
+    const errEl = $("mfa-error");
+    errEl.classList.add("hidden");
+    if (!code || !pendingMfa)
+        return;
+    try {
+        await verifyMfa(pendingMfa.apiBase, pendingMfa.email, pendingMfa.mfaToken, code, mfaUseBackup);
+        pendingMfa = null;
+        $("mfa-code-input").value = "";
+        await refreshView();
+    }
+    catch (e) {
+        errEl.textContent = e?.message || "2FA verification failed";
+        errEl.classList.remove("hidden");
+    }
+});
+$("mfa-backup-toggle").addEventListener("click", () => {
+    mfaUseBackup = !mfaUseBackup;
+    const input = $("mfa-code-input");
+    input.placeholder = mfaUseBackup ? "Backup code" : "123456";
+    input.value = "";
+    $("mfa-backup-toggle").textContent = mfaUseBackup
+        ? "Use the authenticator app instead"
+        : "Use a backup code instead";
+});
+$("mfa-cancel-btn").addEventListener("click", async () => {
+    pendingMfa = null;
+    await refreshView();
 });
 $("logout-btn").addEventListener("click", async () => {
     await logout();
