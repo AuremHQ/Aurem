@@ -146,6 +146,12 @@ export function ShippedRow({ loopId, ship, onDone, onRollbackStarted }) {
   // The confirmation is now non-blocking + focus-managed + a11y
   // labelled — see RollbackConfirmModal for the shared component.
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Part XIII · 1 — drift-acknowledge state. When the backend answers
+  // rollback_status "drift_detected" (HTTP 200, ok: false), we do NOT
+  // hand off to OperationHistory — we reopen the modal in its drift
+  // variant so the user can review branch/expected/current and
+  // confirm "Roll back anyway", which resends with acknowledge_drift.
+  const [driftInfo, setDriftInfo] = useState(null);
 
   // Iter 362 · Bug C — the button label used to lock at
   // "Rolling back — see history" the moment the POST succeeded and
@@ -188,12 +194,20 @@ export function ShippedRow({ loopId, ship, onDone, onRollbackStarted }) {
       inFlight: !!_rollbackInFlight.get(loopId) });
 
     if (_rollbackInFlight.get(loopId)) return;
+    setDriftInfo(null);
     setConfirmOpen(true);
   }, [loopId, ship.shortSha]);
 
   // Iter 362 · Bug B — invoked when user clicks "Rollback" inside
-  // the themed confirmation modal.
-  const performRollback = useCallback(async () => {
+  // the themed confirmation modal. Part XIII · 1 — the return value
+  // is now inspected: a drift response (HTTP 200, ok: false,
+  // rollback_status "drift_detected") is NOT a queued rollback, so it
+  // must not hand off to OperationHistory (the progress stream would
+  // close immediately and the row would hang as "running"). Instead
+  // the modal reopens in its drift variant and the user confirms the
+  // acknowledged retry. `acknowledgeDrift=true` is passed only on
+  // that second, explicit confirmation.
+  const performRollback = useCallback(async (acknowledgeDrift = false) => {
     setConfirmOpen(false);
     if (_rollbackInFlight.get(loopId)) return;
     _rollbackInFlight.set(loopId, true);
@@ -203,7 +217,31 @@ export function ShippedRow({ loopId, ship, onDone, onRollbackStarted }) {
     try {
       // eslint-disable-next-line no-console
       console.debug("[rollback] POST /loop/%s/rollback firing", loopId);
-      await rollbackLoop(loopId);
+      // Part XIII · 1 — default call keeps the exact old signature
+      // rollbackLoop(loopId); the opts object is only passed when the
+      // user actually acknowledged drift (keeps the Iter 362
+      // expectation toHaveBeenCalledWith("lp-b2") green).
+      const res = await (acknowledgeDrift
+        ? rollbackLoop(loopId, { acknowledgeDrift: true })
+        : rollbackLoop(loopId));
+      // Part XIII · 1 — drift gate: backend blocked the rollback
+      // (branch moved since ship). Surface the drift detail and let
+      // the user acknowledge it — do NOT mark handed-off.
+      if (res && res.ok === false && res.rollback_status === "drift_detected") {
+        // eslint-disable-next-line no-console
+        console.debug("[rollback] drift detected — awaiting user acknowledgement", res.drift);
+        _rollbackInFlight.delete(loopId);
+        setPhase("idle");
+        setDriftInfo({
+          branch:   res.drift?.branch,
+          expected: res.drift?.expected,
+          current:  res.drift?.current,
+          detail:   res.detail,
+        });
+        setConfirmOpen(true);
+        return;
+      }
+      setDriftInfo(null);
       // eslint-disable-next-line no-console
       console.debug("[rollback] POST ok — handed off to OperationHistory");
       setPhase("handed-off");
@@ -367,8 +405,10 @@ export function ShippedRow({ loopId, ship, onDone, onRollbackStarted }) {
       <RollbackConfirmModal
         open={confirmOpen}
         shortLabel={`shipped commit ${ship.shortSha}`}
-        onConfirm={performRollback}
-        onCancel={() => setConfirmOpen(false)}
+        drift={driftInfo}
+        confirmLabel={driftInfo ? "Roll back anyway" : undefined}
+        onConfirm={() => performRollback(!!driftInfo)}
+        onCancel={() => { setDriftInfo(null); setConfirmOpen(false); }}
       />
     </div>
     {showPreferredSource && <PreferredSourceButton dark />}

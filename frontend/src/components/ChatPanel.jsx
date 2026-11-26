@@ -822,12 +822,15 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   //   • Render of LoopStepBar + PlanApprovalCard
   //   • execution_mode body field on /chat/stream
   //
-  // Iter 212m-130 — Loop Mode is temporarily locked to founder /
-  // admin / unlimited accounts. Non-founder users see the
-  // "LOOP · SOON" pill (Lock icon) and clicking it fires a toast
-  // instead of toggling. We also force any stale localStorage
-  // `loop` value back to `prompt` on mount so the chat doesn't
-  // silently send `execution_mode:"loop"` for non-founders.
+  // Iter 212m-130 — Loop Mode unlock: founder / admin / unlimited
+  // accounts, PLUS all Pro/Team tiers (unlocked 2026-08-21 — see
+  // isLoopUnlockedSync in utils/chatTextUtils.js for rationale).
+  // Non-unlocked users see the "LOOP · SOON" pill (Lock icon) and
+  // clicking it fires a toast instead of toggling. We also force any
+  // stale localStorage `loop` value back to `prompt` on mount so the
+  // chat doesn't silently send `execution_mode:"loop"` for
+  // non-unlocked users. (Part XV: this comment previously still said
+  // "locked to founder / admin / unlimited" after the Pro/Team unlock.)
   const isLoopUnlocked = useMemo(() => {
     const u = (typeof getUser === "function" && getUser()) || null;
     // 2026-08-21 — unlocked for all Pro/Team tier (see
@@ -900,6 +903,11 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // showed a generic "Verify failed after 2 attempts" narration with
   // zero actionable detail.
   const [loopFailure, setLoopFailure] = useState(null);
+  // Part XIII · 2(c) — the failed loop's original request, saved at
+  // runLoopPlan time so "Retry as new loop" can start a FRESH loop
+  // with the same brief (the terminal loop itself is never
+  // resurrected — the backend 409s retry on FAILED).
+  const lastLoopBriefRef = useRef("");
   // The pending plan message id — once the user approves, we continue
   // the same session with a `LOOP_PHASE:execute` follow-up.
   const pendingPlanRef = useRef(null);
@@ -3941,6 +3949,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
     const composed = attachmentBlock
       ? `${attachmentBlock}\n\n${userBody}`
       : userBody;
+    // Part XIII · 2(c) — remember the exact brief so the failure
+    // card's "Retry as new loop" can re-run it as a fresh loop.
+    lastLoopBriefRef.current = composed;
     const displayContent = (readyAttachments || []).length
       ? `${userText || ""}${userText ? "\n\n" : ""}*📎 ${readyAttachments.length} attachment${
           readyAttachments.length > 1 ? "s" : ""}: ${
@@ -3966,6 +3977,10 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         projectId: activeProject?.project_id || null,
         userMessage: composed,
         sessionId,
+        // Part XIII · 2(a) — thread the chat review mode (swift /
+        // pro / maxx) through to the backend StartBody, exactly like
+        // streamChat already does.
+        mode: chatMode,
       });
       const lid  = resp?.loop_id;
 
@@ -4686,6 +4701,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         errors: _failedErrors,
         maxSelfHeals: (typeof data?.max_self_heals === "number")
           ? data.max_self_heals : undefined,
+        // Part XIII · 2(c) — carry the failed loop's original brief
+        // so the card's "Retry as new loop" can re-run it fresh.
+        originalMessage: lastLoopBriefRef.current || "",
       });
     }
 
@@ -5183,6 +5201,21 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
   // loop (state==='awaiting_confirmation', phase==='plan', data.plan)
   // — zero new frontend rendering path. The user still has to press
   // Confirm again for real; this only re-presents the gate.
+  // Part XIII · 2(c) — "Retry as new loop" (LoopFailureCard).
+  // A terminal FAILED loop can never be resurrected — pauseResponse
+  // retry 409s on terminal loops — so this starts a FRESH loop with
+  // the failed loop's original request (via runLoopPlan, the same
+  // path a typed message takes). Deliberately NOT pauseResponse.
+  async function handleRetryAsNewLoop(originalMessage) {
+    const brief = originalMessage || lastLoopBriefRef.current || "";
+    if (!brief) {
+      toast("Nothing to retry — the original request wasn't saved. Type it again to start a fresh loop.");
+      return;
+    }
+    setLoopFailure(null);
+    setLoopTerminal(false);
+    await runLoopPlan(brief, [], {});
+  }
   async function handleRestartLoop() {
     const targetLoopId = loopId;
     if (loopAbortRef.current) {
@@ -6236,6 +6269,8 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
             failedFiles={loopFailure.failedFiles}
             errors={loopFailure.errors}
             maxSelfHeals={loopFailure.maxSelfHeals}
+            originalMessage={loopFailure.originalMessage}
+            onRetryAsNewLoop={handleRetryAsNewLoop}
           />
         </div>
       )}
@@ -6439,6 +6474,9 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
         key={livePopupTaskId || "none"}
         taskId={livePopupTaskId}
         onClose={() => setLivePopupTaskId(null)}
+        // Part XIII · 4(a) — Retry swaps the popup to the new task
+        // the backend queued (the key remount gives it a fresh stream).
+        onRetry={(tid) => setLivePopupTaskId(tid)}
         onDone={(task) => {
           // Iter 388g — attach the unified-diff hunks the worker just
           // persisted onto the shipped assistant message. Matches the
