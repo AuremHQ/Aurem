@@ -1,5 +1,5 @@
 # robots.txt — AUREM (auremcto.com)
-# Last updated: 2026-11-19
+# Last updated: 2026-11-26
 #
 # Policy: we welcome traditional crawlers AND AI/LLM crawlers — answer
 # engines (ChatGPT Search, Perplexity, Claude, Google AI Overviews,
@@ -109,6 +109,21 @@ User-agent: ImagesiftBot
 Allow: /
 
 User-agent: Amazonbot
+Allow: /
+
+User-agent: MistralAI-User
+Allow: /
+
+User-agent: MistralAI-Index
+Allow: /
+
+User-agent: DuckAssistBot
+Allow: /
+
+User-agent: GoogleOther
+Allow: /
+
+User-agent: Google-CloudVertexBot
 Allow: /
 
 # ── No high-frequency scrapers / archivers we don't want ────────────

@@ -125,6 +125,8 @@ jobs:
     name: Fitness-function invariants (always green on main)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      EMERGENT_LLM_KEY: ${{ secrets.EMERGENT_LLM_KEY }}
     services:
       # Iter 347 — the invariants subset includes DB-touching suites;
       # the job env already pointed MONGO_URL at localhost:27017 but
@@ -149,22 +151,27 @@ jobs:
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
-          # Iter 306 — emergentintegrations is served from Emergent's
-          # private index (not on public PyPI). Without this URL the
-          # install fails on GH-hosted runners and blocks the whole
-          # gate. Source: `pip install emergentintegrations
-          # --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/`
+          # 2026-11-26 pip fix — requirements.txt is public-PyPI-only
+          # now. emergentintegrations lives in requirements-emergent.txt
+          # and installs only when the EMERGENT_LLM_KEY secret is set
+          # (separate step below).
           # 2026-08-26 — CI Retry mechanism: 3 attempts w/ backoff for
           # this network install only — never applied to test results
           # (see --only-rerun on the test step below for that half).
           for attempt in 1 2 3; do
-            pip install -r requirements.txt \
-              --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+            pip install --no-cache-dir -r requirements.txt \
               && break
             echo "::warning::pip install attempt $attempt failed — retrying in $((attempt * 5))s"
             [ "$attempt" -eq 3 ] && exit 1
             sleep $((attempt * 5))
           done
+          python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
+      - name: Install Emergent-only deps (optional)
+        if: ${{ env.EMERGENT_LLM_KEY != '' }}
+        working-directory: backend
+        run: |
+          pip install --no-cache-dir -r requirements-emergent.txt \
+            --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
       # 2026-08-25 — same CI-tooling gap fix as ci.yml: this job runs
       # test_iter212m62_loop_verify.py (via the "loop" keyword filter
       # below) which shells out to real `ruff`/`eslint` binaries;
@@ -344,6 +351,8 @@ jobs:
     name: Guardrail regression suite (audit rules)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      EMERGENT_LLM_KEY: ${{ secrets.EMERGENT_LLM_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -355,13 +364,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           for attempt in 1 2 3; do
-            pip install -r requirements.txt \
-              --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+            pip install --no-cache-dir -r requirements.txt \
               && break
             echo "::warning::pip install attempt $attempt failed — retrying in $((attempt * 5))s"
             [ "$attempt" -eq 3 ] && exit 1
             sleep $((attempt * 5))
           done
+          python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
+      - name: Install Emergent-only deps (optional)
+        if: ${{ env.EMERGENT_LLM_KEY != '' }}
+        working-directory: backend
+        run: |
+          pip install --no-cache-dir -r requirements-emergent.txt \
+            --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
       - name: Run guardrail suite
         working-directory: backend
         run: python -m pytest tests/guardrails/ -v --tb=short
@@ -535,6 +550,7 @@ jobs:
       ADMIN_EMAIL: test@aurem.dev
       LOGIN_RATE_PER_MIN: "1000"
       RATE_LIMIT_DISABLED: "1"
+      EMERGENT_LLM_KEY: ${{ secrets.EMERGENT_LLM_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -545,13 +561,19 @@ jobs:
         working-directory: backend
         run: |
           for attempt in 1 2 3; do
-            pip install -r requirements.txt \
-              --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+            pip install --no-cache-dir -r requirements.txt \
               && break
             echo "::warning::pip install attempt $attempt failed — retrying in $((attempt * 5))s"
             [ "$attempt" -eq 3 ] && exit 1
             sleep $((attempt * 5))
           done
+          python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
+      - name: Install Emergent-only deps (optional)
+        if: ${{ env.EMERGENT_LLM_KEY != '' }}
+        working-directory: backend
+        run: |
+          pip install --no-cache-dir -r requirements-emergent.txt \
+            --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
       - name: Boot backend in background
         working-directory: backend
         run: |
@@ -665,6 +687,7 @@ jobs:
       ADMIN_EMAIL: test@aurem.dev
       LOGIN_RATE_PER_MIN: "1000"
       RATE_LIMIT_DISABLED: "1"
+      EMERGENT_LLM_KEY: ${{ secrets.EMERGENT_LLM_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -677,13 +700,19 @@ jobs:
           # 2026-08-26 — CI Retry mechanism: network-install retry only,
           # scoped exactly like ci.yml/quality-gate.yml's invariants job.
           for attempt in 1 2 3; do
-            pip install -r requirements.txt \
-              --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+            pip install --no-cache-dir -r requirements.txt \
               && break
             echo "::warning::pip install attempt $attempt failed — retrying in $((attempt * 5))s"
             [ "$attempt" -eq 3 ] && exit 1
             sleep $((attempt * 5))
           done
+          python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
+      - name: Install Emergent-only deps (optional)
+        if: ${{ env.EMERGENT_LLM_KEY != '' }}
+        working-directory: backend
+        run: |
+          pip install --no-cache-dir -r requirements-emergent.txt \
+            --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
       - name: Boot backend in background
         working-directory: backend
         run: |
@@ -794,6 +823,8 @@ jobs:
     needs: [invariants, frontend-vitest, visual-regression]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      EMERGENT_LLM_KEY: ${{ secrets.EMERGENT_LLM_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -806,7 +837,13 @@ jobs:
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt \
+          pip install --no-cache-dir -r requirements.txt
+          python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
+      - name: Install Emergent-only deps (optional)
+        if: ${{ env.EMERGENT_LLM_KEY != '' }}
+        working-directory: backend
+        run: |
+          pip install --no-cache-dir -r requirements-emergent.txt \
             --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
       - name: Get diff and commit message
         id: diff
