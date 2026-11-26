@@ -115,7 +115,19 @@ async def deploy_via_ssh(
     errors: list[str] = []
     try:
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # 2026-11-26 (audit X3, decision 7/13) — host-key
+        # verification is ON. AutoAddPolicy used to silently trust
+        # any server key (MITM). RejectPolicy raises SSHException
+        # for an unknown host, so the deploy returns ok=False with
+        # the refusal in `fatal`. Keys come from the backend host's
+        # ~/.ssh/known_hosts (load_system_host_keys tolerates a
+        # missing file — empty set, still fail-closed). New host?
+        # On the backend host run
+        # `ssh-keyscan -H -p <port> <host> >> ~/.ssh/known_hosts`
+        # after verifying the fingerprint out-of-band. DO NOT
+        # re-add AutoAddPolicy.
+        client.load_system_host_keys()
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
         connect_kwargs = {"hostname": host, "port": port, "username": user,
                            "timeout": 30}
         if key_pem:
@@ -127,7 +139,16 @@ async def deploy_via_ssh(
         else:
             return {"ok": False, "reason": "no_auth_supplied"}
 
-        client.connect(**connect_kwargs)
+        try:
+            client.connect(**connect_kwargs)
+        except Exception:
+            # 2026-11-26 (audit X3) — a refused connect (e.g. the
+            # RejectPolicy unknown-host refusal above) must still
+            # close the client: paramiko leaves the socket and its
+            # transport thread open otherwise, leaking one connection
+            # per failed deploy.
+            client.close()
+            raise
         sftp = client.open_sftp()
         try:
             _sftp_mkdirs(sftp, remote_dir)

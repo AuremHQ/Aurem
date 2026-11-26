@@ -548,11 +548,20 @@ async def _run_deploy_remote(user_id: str, run_id: str,
 
     try:
         async with asyncio.timeout(DEPLOY_TIMEOUT_SECONDS):
+            # 2026-11-26 (audit X3, decision 7/13) — host-key
+            # verification is ON. `known_hosts=None` used to disable
+            # it: any server key was accepted (MITM). Omitting the
+            # parameter uses asyncssh's default, ~/.ssh/known_hosts
+            # on the backend host: an unknown or mismatched host key
+            # raises HostKeyNotVerifiable and the run fails closed
+            # (generic except below). DO NOT re-add
+            # `known_hosts=None`. New host? On the backend host run
+            # `ssh-keyscan -H -p <port> <host> >> ~/.ssh/known_hosts`
+            # after verifying the fingerprint out-of-band.
             async with asyncssh.connect(
                 cfg["host"], port=int(cfg.get("port", 22)),
                 username=cfg.get("username", "root"),
                 client_keys=[asyncssh.import_private_key(private_key)],
-                known_hosts=None,
                 connect_timeout=15,
             ) as conn:
                 await _append(f"$ {command}")

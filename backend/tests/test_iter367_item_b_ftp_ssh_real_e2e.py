@@ -84,10 +84,19 @@ def ftp_server():
 
 
 @pytest.fixture
-def sftp_server():
+def sftp_server(monkeypatch):
     """Boot a REAL OpenSSH `sshd` daemon on a random loopback port
     with password auth enabled. This is a real sftp-subsystem server
     from the system's openssh-server package — not a paramiko fake.
+
+    2026-11-26 (audit X3, decision 7/13) — host-key verification
+    is ON in `deploy_via_ssh` (RejectPolicy), so the fixture now
+    provisions trust the way a real operator does: the temp sshd's
+    host key goes into a temp client HOME's ~/.ssh/known_hosts
+    (bracketed `[127.0.0.1]:<port>` form for the non-22 port) before
+    the server boots. No test assertion changed — the upload still
+    has to land byte-for-byte; the fixture just stops relying on
+    implicit trust (the old AutoAddPolicy).
     """
     import subprocess
     import shutil
@@ -111,6 +120,20 @@ def sftp_server():
         ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", host_key],
         check=True, capture_output=True,
     )
+
+    # Provision the host key for the paramiko client: temp client HOME
+    # with ~/.ssh/known_hosts holding the temp sshd's public key.
+    # (Same procedure as the production note in ftp_ssh_deploy.py:
+    # `ssh-keyscan -H -p <port> <host> >> ~/.ssh/known_hosts`.)
+    pub = subprocess.run(
+        ["ssh-keygen", "-y", "-f", host_key],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    client_home = tempfile.mkdtemp(prefix="iter367_sftp_client_home_")
+    os.makedirs(os.path.join(client_home, ".ssh"), exist_ok=True)
+    with open(os.path.join(client_home, ".ssh", "known_hosts"), "w") as fh:
+        fh.write(f"[127.0.0.1]:{port} {pub}\n")
+    monkeypatch.setenv("HOME", client_home)
 
     # Create a testuser with a password on this system? No — sshd wants
     # a real /etc/passwd user. Since we're root in this container, we
