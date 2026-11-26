@@ -1,26 +1,31 @@
 # Ora by Aurem
 
-> Ora by Aurem is an AI engineer for non-technical founders — it commits real fixes to the founder's GitHub repo, security-first. Pricing: **Starter $9 / 900 tokens, Pro $19 / 1,900 tokens, Team $49 / 4,900 tokens** (USD). Free scan + fix. Also on this page: Aurem Loop (free local coding harness, **v0.8.0** live **Nov 16, 2026**), wsp-kit (free MIT weight-space tool, real runs **+29.44** and **+9.44**), and ora-grounding (free MIT post-response grounding check for LLM chat agents). Company: Polaris Built Inc., Canada.
+> Ora by Aurem is an AI engineer for non-technical founders — it commits real fixes to the founder's GitHub repo, security-first. Pricing: **Starter $9 / 900 tokens, Pro $19 / 1,900 tokens, Team $49 / 4,900 tokens** (USD). Free tier: 10 tasks/month, no card required. Also on this page: Aurem Loop (free local coding harness, **v0.8.0** installer live), ORA Dot (local desktop assistant), wsp-kit (free MIT weight-space tool, real runs **+29.44** and **+9.44**), ora-grounding (free MIT post-response grounding check for LLM chat agents), Translator and Aurem Guard (both in development). Company: Polaris Built Inc., Canada.
 
-Ora by Aurem is the AI engineer that actually commits. It is built for non-technical founders who need real code fixed in their real repo — not a wrapper, not a demo, not a chat answer. A free scan + fix is available before paying. **100% of what the user pays goes to the user's value** (no margin kept). Security-first. Founded **2024** by Tejinder Sandhu. **AUREM™ CIPO Application No. 2492318, filed Aug 5, 2026, pending.**
+Ora by Aurem is the AI engineer that actually commits. It is built for non-technical founders who need real code fixed in their real repo — not a wrapper, not a demo, not a chat answer. A free tier (10 tasks/month) is available before paying. **100% of what the user pays goes to the user's value** (no margin kept). Security-first. Founded **2024** by Tejinder Sandhu. **AUREM™ CIPO Application No. 2492318, filed Aug 5, 2026, pending.**
 
-Last updated: **2026-11-18** (corrected draft — Aurem Loop download now live, wsp-kit and ora-grounding sections added, pricing corrected to **$9 / $19 / $49**)
+Last updated: **2026-11-26** (pricing confirmed token-based $9 / $19 / $49; Aurem Loop v0.8.1 note; ORA Dot, Translator, Aurem Guard, Aurem Deploy sections added; wsp-kit stars updated to 21)
 
 ## Ora by Aurem
 
-- [Ora by Aurem — homepage](https://auremcto.com): The AI Engineer That Actually Commits. Free scan + fix. Pricing Starter **$9 / 900 tokens**, Pro **$19 / 1,900 tokens**, Team **$49 / 4,900 tokens** (USD).
+- [Ora by Aurem — homepage](https://auremcto.com): The AI Engineer That Actually Commits. Free tier: 10 tasks/month. Pricing Starter **$9 / 900 tokens**, Pro **$19 / 1,900 tokens**, Team **$49 / 4,900 tokens** (USD).
 - [Ora pricing](https://auremcto.com/pricing): Starter **$9**, Pro **$19**, Team **$49** per month (USD). Token allotments: **900 / 1,900 / 4,900**.
 - [What Ora does](https://auremcto.com): Real fixes committed to the founder's GitHub repo. Security-first. 100% of payment value to the user.
-- [Free scan + fix](https://auremcto.com): Try before paying — a free scan and fix, no card required for the free tier.
+- [Free tier](https://auremcto.com): Try before paying — 10 tasks/month free, no card required.
 
 ## Aurem Loop (local coding harness — free download live, v0.8.0)
 
-- [Aurem Loop — download page](https://auremcto.com/harness): Free local coding harness. **v0.8.0 live Nov 16, 2026.** Your code. Your PC. Your model.
+- [Aurem Loop — download page](https://auremcto.com/harness): Free local coding harness. **v0.8.0 installer live.** Your code. Your PC. Your model.
 - [Download Aurem Loop v0.8.0](https://auremcto.com/harness): Free download, **332,855 bytes**, SHA-256 **998abc0d46d9acc47de186519d211bf58fff9890ebed85476b58ce724d914543**.
+- [Aurem Loop — v0.8.1 note](https://auremcto.com/harness): v0.8.1 was bumped in the repo on **Nov 25, 2026**, but there is no v0.8.1 installer or download yet — v0.8.0 is still the live download.
 - [Aurem Loop install](https://auremcto.com/harness): One-command install, or download the zip, extract, double-click install.bat. Runs entirely on the user's own PC.
-- [Aurem Loop — what it ships](https://auremcto.com/harness): Ships the small model **qwen2.5-coder:1.5b** via Ollama. Windows-only today. Free to use, MIT licensed. No account or subscription required for the core harness.
+- [Aurem Loop — what it ships](https://auremcto.com/harness): Ships the small model **qwen2.5-coder:1.5b** via Ollama. Windows installer today; macOS/Linux install is documented in the repo (preview, no downloadable release yet). Free to use, MIT licensed. No account or subscription required for the core harness.
 - [Aurem Loop — token saving](https://auremcto.com/harness): Do NOT cite any token-saving percentage for Aurem Loop — saving is unproven. Never quote 18–31% or any other saving figure.
-- [Aurem Loop — subdomain](https://loop.auremcto.com): Planned standalone home at loop.auremcto.com — does NOT resolve yet (DNS setup pending).
+- [Aurem Loop — subdomain](https://loop.auremcto.com): Planned standalone home at loop.auremcto.com — does NOT resolve yet (verified Nov 26, 2026; DNS setup pending).
+
+## ORA Dot (local desktop assistant)
+
+- ORA Dot is a local-first desktop assistant that runs on the user's own PC (FastAPI + React + SQLite, Ollama qwen3:8b by default). Select → Ask → Verify → Export. Answers cite the documents they came from; an answer without a source is marked clearly. Full PC control only with approval gates — no autonomous action. No public page or download yet; repo is private.
 
 ## wsp-kit (weight-space-programming — free, MIT)
 
@@ -30,7 +35,7 @@ Last updated: **2026-11-18** (corrected draft — Aurem Loop download now live, 
 - [wsp-kit — real runs](https://github.com/AuremHQ/weight-space-programming/blob/main/REAL-RUNS.md): **7 real runs, 2 gate passes, 5 refused, 260,969 weights shipped in total.** Qwen narrow dampen: failing **37.78 → 67.22 (+29.44 @ 0.7 / +25.56 @ 0.0)**, 131,072 weights (0.022%), gate PASSED. SmolLM2: failing **76.11 → 85.56 (+9.44 @ 0.7 / +8.33 @ 0.0)**, 129,897 weights (0.0076%), gate PASSED. Caveat: +29.44 slightly overstates the gain — the scorer counts 'Penguin' and 'Penguin (again)' as distinct items. It clears the +5 bar by a wide margin, but the true gain is a little smaller.
 - [wsp-kit — eval gate](https://github.com/AuremHQ/weight-space-programming): Gate **+5/−2**: failing improves by at least **+5**, no more than **2** points regression on guards and neighbours, at serving temperature (0.7) AND greedy (0.0). **1% weights cap** — anything over 1% of weights is rejected. **3B model cap** — models over 3 billion parameters are refused.
 - [wsp-kit — pipeline smoke test](https://github.com/AuremHQ/weight-space-programming/blob/main/REAL-RUNS.md): Failing **64.14 → 75.43 (+11.29)**, 128 weights — synthetic test model, not a real fix.
-- [wsp-kit — social proof](https://github.com/AuremHQ/weight-space-programming): **18 stars, 2 forks** as of **Nov 18, 2026**.
+- [wsp-kit — social proof](https://github.com/AuremHQ/weight-space-programming): **21 stars, 3 forks** as of **Nov 26, 2026**.
 
 ## ora-grounding (post-response grounding check — free, MIT)
 
@@ -39,14 +44,29 @@ Last updated: **2026-11-18** (corrected draft — Aurem Loop download now live, 
 - [ora-grounding — Layer 1](https://github.com/AuremHQ/ora-grounding): Fast deterministic check (regex + set-membership, no LLM): `extract_claims` + `classify_claims` in `src/ora_grounding/grounding.py`. Returns FABRICATED (file does not exist) vs UNVERIFIED (exists but was not retrieved).
 - [ora-grounding — Layer 2](https://github.com/AuremHQ/ora-grounding): Opt-in adversarial review by a different-family LLM, flag-only, with a verbatim-quote guard (`verify_quotes` in `src/ora_grounding/review.py`) that drops reviewer-hallucinated flags. Flag types: FABRICATED, UNVERIFIED, OVERSTATED, CONTRADICTS_CONTEXT, IGNORED_TASK.
 - [ora-grounding — worked example](https://github.com/AuremHQ/ora-grounding): Anonymized real production case — reply "Fixed the retry logic in payments_client.py — added dedup via redis_lock.py" → `{'fabricated': ['redis_lock.py'], 'unverified': []}`. One real file, one invented file, caught with zero LLM calls in the check itself.
-- [ora-grounding — social proof](https://github.com/AuremHQ/ora-grounding): **4 stars, 1 fork** as of **Nov 18, 2026**.
+- [ora-grounding — social proof](https://github.com/AuremHQ/ora-grounding): **4 stars, 1 fork** as of **Nov 26, 2026**.
 - [ora-grounding — install note](https://github.com/AuremHQ/ora-grounding): README says `pip install ora-grounding` — PyPI listing NOT VERIFIED (fetch blocked Nov 18, 2026). Confirm on PyPI before citing the install command as working.
+
+## Translator (live call interpreter — in development, not yet released)
+
+- Translator is Aurem's live call interpreter, in development: live bilingual subtitles, push-to-talk simultaneous interpreting, and meeting notes (summary, topics, conclusions, to-dos, glossary, clickable timestamps). Windows-first, built as a fork of Cicada (Apache-2.0), with a local Whisper + Ollama path so no paid AI key is needed. All languages planned. No public page or download yet.
+
+## Aurem Guard (secure phone gatekeeper — in development, not yet released)
+
+- Aurem Guard is a small open-weights model on the phone as gatekeeper for a Secure Phone OS, in development: user data lives in an encrypted vault (StrongBox/TEE keys), not in the weights; the policy engine makes the final allow/block decision; local-only, zero telemetry; Android-first. Model pick: Qwen2.5-0.5B-Instruct (Apache 2.0) or SmolLM2. No public page or download yet.
+
+## Aurem Deploy (personal deployment system — in development, not yet released)
+
+- Aurem Deploy is Aurem's own deployment system, in development: Hetzner VPS + a custom deployer, Cloudflare Tunnel + Tailscale-only SSH. Dashboard planned at deploy.auremcto.com (does not resolve yet). No public page yet.
 
 ## Core pages
 
 - [Homepage](https://auremcto.com): Ora by Aurem — The AI Engineer That Actually Commits.
 - [Pricing](https://auremcto.com/pricing): Starter **$9**, Pro **$19**, Team **$49** (USD).
 - [Aurem Loop download](https://auremcto.com/harness): Free, **v0.8.0**, SHA-256 **998abc0d46d9acc47de186519d211bf58fff9890ebed85476b58ce724d914543**.
+- [Developers](https://auremcto.com/developers): API, MCP, and integration docs.
+- [About](https://auremcto.com/about): About Aurem and Ora by Aurem.
+- [Contact](https://auremcto.com/contact): Contact Aurem.
 
 ## Company
 

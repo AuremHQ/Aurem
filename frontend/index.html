@@ -154,7 +154,7 @@
     <meta name="title" content="ORA by Aurem — The AI Engineer That Actually Commits | $9/mo" />
     <meta
       name="description"
-      content="ORA is the AI software engineer that reads your GitHub repo, writes production-ready code, runs the Vanguard 25-pattern pre-commit security scan, and commits directly to your branches. No IDE required. No token billing. $9/month flat — 55% cheaper than Copilot and Cursor, 98% cheaper than Devin. 10 free tasks, no card required."
+      content="ORA by Aurem is the AI engineer that actually commits — real fixes to your GitHub repo, security-first. Token pricing from $9/month: Starter 900 tokens, Pro 1,900, Team 4,900. Free tier: 10 tasks/month, no card required."
     />
     <meta
       name="keywords"
@@ -214,7 +214,7 @@
     <meta property="og:title" content="ORA by Aurem — The AI Engineer That Actually Commits Code to GitHub" />
     <meta
       property="og:description"
-      content="ORA plugs into your GitHub repo and ships production-ready code directly to your branches. Vanguard 25-pattern security scan on every commit. No IDE, no token meters. $9/month flat — 55% cheaper than Copilot."
+      content="ORA by Aurem — the AI engineer that actually commits code to GitHub. Security-first, token pricing from $9/month. Free tier: 10 tasks/month."
     />
     <meta property="og:image" content="https://auremcto.com/og-image.png" />
     <meta property="og:image:secure_url" content="https://auremcto.com/og-image.png" />
@@ -233,7 +233,7 @@
     <meta name="twitter:title" content="ORA by Aurem — AI Engineer That Commits Code. $9/mo." />
     <meta
       name="twitter:description"
-      content="ORA reads your GitHub repo, writes production code, runs Vanguard security scans, and commits directly. 500+ devs. 12k+ commits. No IDE. No token meters."
+      content="ORA by Aurem — the AI engineer that actually commits code to GitHub. Security-first, token pricing from $9/month. Free tier: 10 tasks/month."
     />
     <meta name="twitter:image" content="https://auremcto.com/og-image.png" />
     <meta name="twitter:image:alt" content="ORA by Aurem" />
@@ -348,7 +348,7 @@
         "addressCountry": "CA"
       },
       "sameAs": [
-        "https://aurem.live",
+        "https://github.com/AuremHQ",
         "https://github.com/TJSNDHU/Aurem",
         "https://x.com/aurem_live",
         "https://www.instagram.com/aurem_live",
@@ -397,7 +397,7 @@
       "@id": "https://auremcto.com/#website",
       "url": "https://auremcto.com/",
       "name": "ORA by Aurem",
-      "description": "The AI engineer that actually commits — $9/month, no IDE, no token billing.",
+      "description": "The AI engineer that actually commits — token pricing from $9/month (Starter 900 tokens, Pro 1,900, Team 4,900). No IDE required.",
       "publisher": { "@id": "https://auremcto.com/#organization" },
       "inLanguage": "en-US",
       "potentialAction": {
@@ -418,7 +418,7 @@
       "@id": "https://auremcto.com/#product",
       "name": "ORA by Aurem",
       "alternateName": ["ORA", "ORA AI Engineer"],
-      "description": "ORA is an autonomous AI software engineer that connects to your GitHub repository, reads your codebase, writes production-ready code, runs Vanguard pre-commit security scans, and ships code directly to your branches on manual approval. Every task runs through a verified 5-phase Loop (Plan → Execute → Verify → Scan → Ship) with a hard 2-attempt self-heal cap. No IDE required. Flat monthly pricing starting at $9/month with 10 tasks free. Supports MCP 2.4 clients (Claude Desktop, Claude Code, Cursor, VS Code).",
+      "description": "ORA is an autonomous AI software engineer that connects to your GitHub repository, reads your codebase, writes production-ready code, runs Vanguard pre-commit security scans, and ships code directly to your branches on manual approval. Every task runs through a verified 5-phase Loop (Plan → Execute → Verify → Scan → Ship) with a hard 2-attempt self-heal cap. No IDE required. Token-based pricing from $9/month: Starter 900 tokens, Pro 1,900 tokens, Team 4,900 tokens. Free tier: 10 tasks/month. Supports MCP 2.4 clients (Claude Desktop, Claude Code, Cursor, VS Code).",
       "url": "https://auremcto.com",
       "image": "https://auremcto.com/ora-logo.png",
       "screenshot": "https://auremcto.com/og-image.png",
@@ -437,12 +437,30 @@
         },
         {
           "@type": "Offer",
-          "name": "Founder",
+          "name": "Starter",
           "price": "9",
           "priceCurrency": "USD",
           "availability": "https://schema.org/InStock",
           "url": "https://auremcto.com/pricing",
-          "description": "$9/month flat — no token metering, no per-seat pricing, unlimited repositories. Limited to the first 500 users."
+          "description": "$9/month — 900 tokens."
+        },
+        {
+          "@type": "Offer",
+          "name": "Pro",
+          "price": "19",
+          "priceCurrency": "USD",
+          "availability": "https://schema.org/InStock",
+          "url": "https://auremcto.com/pricing",
+          "description": "$19/month — 1,900 tokens."
+        },
+        {
+          "@type": "Offer",
+          "name": "Team",
+          "price": "49",
+          "priceCurrency": "USD",
+          "availability": "https://schema.org/InStock",
+          "url": "https://auremcto.com/pricing",
+          "description": "$49/month — 4,900 tokens."
         }
       ],
       "featureList": [
@@ -453,7 +471,7 @@
         "GitHub OAuth with per-repo scope selection — code stays in the repos you authorize",
         "MCP 2.4 server — works with Claude Desktop, Claude Code, Cursor, VS Code, and any MCP 2.4 client",
         "Repository-level reasoning across Python, JavaScript, TypeScript, Go, Rust, Java, Kotlin, Swift, Ruby, PHP, C, C++",
-        "Flat monthly pricing with no token metering",
+        "Token-based pricing: Starter $9 / 900 tokens, Pro $19 / 1,900 tokens, Team $49 / 4,900 tokens",
         "Privacy: OpenRouter data_collection: deny — code is not used to train third-party models"
       ],
       "author":    { "@id": "https://auremcto.com/#organization" },
@@ -489,7 +507,7 @@
           "name": "How much does ORA cost?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "ORA starts at $9/month flat, and there are 10 tasks free with no credit card. The $9 plan has no token metering and no per-seat pricing — the same monthly price whether ORA runs 5 tasks or 500. Founder pricing is limited to the first 500 users; check the pricing page for the current spots-remaining count."
+            "text": "ORA is token-based: Starter $9/month for 900 tokens, Pro $19/month for 1,900 tokens, Team $49/month for 4,900 tokens (USD). The Free tier includes 10 tasks/month with no credit card. Check the pricing page for current details."
           }
         },
         {
@@ -554,6 +572,17 @@
       "name": "Ora by Aurem",
       "legalName": "Polaris Built Inc.",
       "url": "https://auremcto.com",
+      "hasPart": [
+        {
+          "@id": "https://auremcto.com/#ora"
+        },
+        {
+          "@id": "https://auremcto.com/#loop"
+        },
+        {
+          "@id": "https://auremcto.com/#wsp-kit"
+        }
+      ],
       "foundingDate": "2024",
       "founder": {
         "@type": "Person",
@@ -564,6 +593,7 @@
         "addressCountry": "CA"
       },
       "sameAs": [
+        "https://github.com/AuremHQ",
         "https://github.com/AuremHQ/weight-space-programming",
         "https://github.com/AuremHQ/ora-grounding"
       ]
@@ -602,6 +632,48 @@
           "availability": "https://schema.org/InStock"
         }
       ]
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://auremcto.com/#loop",
+      "name": "Aurem Loop",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Windows",
+      "url": "https://auremcto.com/harness",
+      "description": "Aurem Loop is a free local coding harness. Your code. Your PC. Your model. Free download, MIT licensed.",
+      "provider": {
+        "@id": "https://auremcto.com/#organization"
+      },
+      "offers": [
+        {
+          "@type": "Offer",
+          "name": "Free",
+          "price": "0",
+          "priceCurrency": "USD",
+          "availability": "https://schema.org/InStock"
+        }
+      ]
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://auremcto.com/#wsp-kit",
+      "name": "wsp-kit (Weight Space Programming)",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Windows, macOS, Linux",
+      "url": "https://github.com/AuremHQ/weight-space-programming",
+      "description": "wsp-kit is a free MIT tool that fixes one specific, repeatable failure in a small open-weight model by editing its weights directly — no retraining, no fine-tuning, no gradients. An eval gate decides whether any edit ships.",
+      "provider": {
+        "@id": "https://auremcto.com/#organization"
+      },
+      "offers": [
+        {
+          "@type": "Offer",
+          "name": "Free",
+          "price": "0",
+          "priceCurrency": "USD",
+          "availability": "https://schema.org/InStock"
+        }
+      ]
     }
   ]
 }
@@ -629,7 +701,7 @@
           the GitHub REST API in minutes. Every commit passes through
           the Vanguard 25-pattern pre-commit security scan plus the
           new two-round deep scan with AI remediation report (Iter
-          212m-66). No IDE required, no token billing.
+          212m-66). No IDE required. Token pricing from $9/month: Starter 900 tokens, Pro 1,900, Team 4,900.
         </p>
         <p>
           <strong>How ORA compares:</strong> 55% cheaper than GitHub
@@ -642,7 +714,7 @@
         </p>
         <p>
           10 free tasks on signup. No credit card required. 498 of 500
-          founder spots remaining at $9/month flat.
+          founder spots remaining at $9/month (900 tokens).
           <a href="https://auremcto.com/signup" style="color:#ffa53c">Get started →</a>
         </p>
       <h2>How a task ships</h2>

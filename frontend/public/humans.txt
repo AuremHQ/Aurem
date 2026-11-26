@@ -12,7 +12,7 @@ Emergent — the platforms and people that make a one-person AI
 engineering company possible in 2026.
 
 # SITE
-Last update: 2026-05-31
+Last update: 2026-11-26
 Standards: HTML5, ES2022, OpenAPI 3.1
 Components: React 18, Vite 5, FastAPI, Motor (MongoDB)
 Software: VS Code, GitHub, AUREM Dev (yes — we ship features on

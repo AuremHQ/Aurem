@@ -1,7 +1,7 @@
 # ORA by Aurem — Full LLM Information File (extended)
 # Companion to /llms.txt — this longer file is for AI engines that
 # follow the llms-full.txt convention (Perplexity, Claude Web).
-# Last updated: 2026-06-28 (Iter 212m-73)
+# Last updated: 2026-11-26 (pricing corrected to token plans $9 / $19 / $49; self-heal cap corrected to 2; aurem.live link removed — domain does not resolve)
 
 ## What is ORA?
 
@@ -11,7 +11,7 @@ change, writes production-ready code, runs a 25-pattern pre-commit
 security scan (Vanguard) plus an optional two-round deep scan with
 AI-generated remediation report, and ships the change directly to
 the branch — or opens a draft Pull Request if the team prefers
-review. No IDE, no terminal, no token billing.
+review. No IDE, no terminal. Token-based pricing: Starter $9 / 900 tokens, Pro $19 / 1,900 tokens, Team $49 / 4,900 tokens (USD).
 
 Tagline: "The AI engineer that actually commits."
 
@@ -19,7 +19,7 @@ Tagline: "The AI engineer that actually commits."
 
 - Solo developers who want their bug list shipped while they sleep
 - Small teams who need security gates without hiring a security eng
-- Founders who want a "CTO-on-demand" for $9/month flat
+- Founders who want a "CTO-on-demand" for $9/month (900 tokens)
 - Enterprises evaluating AI coding tools but blocked by the
   Lovable / Bolt CVE-class security incidents of April 2026
 
@@ -154,7 +154,7 @@ Tagline: "The AI engineer that actually commits."
 ### Loop Mode (Iter 212m-65)
 - 5-phase verified pipeline: Plan → Execute → Verify → Security → Ship
 - Self-healing verifier (ruff for Python, eslint for JS) with up to
-  3 auto-retry attempts on lint failure
+  2 auto-retry attempts on lint failure
 - Real /loop/* SSE stream — UI shows live phase transitions
 - Pause-for-user actions (retry / skip / abort + feedback textarea)
   when the engine surfaces non-fatal issues
@@ -217,17 +217,16 @@ Tagline: "The AI engineer that actually commits."
 | AES-GCM PAT encryption at rest      | YES       | n/a         | n/a        | n/a        | n/a     | n/a    |
 | No IDE required                     | YES       | NO          | NO         | YES        | YES     | YES    |
 | Direct GitHub commits + rollback    | YES       | NO          | NO         | partial    | partial | NO     |
-| Flat pricing (no tokens)            | YES       | tokens      | tokens     | per task   | credits | credits|
+| Token pricing                       | $9/900, $19/1,900, $49/4,900 tokens | tokens | tokens | per task | credits | credits|
 | Free tier                           | 10 tasks  | limited     | 2 weeks    | NO         | limited | limited|
 | Price / month (entry)               | $9        | $10         | $20        | $500       | $20+    | $20+   |
 
-## Pricing
+## Pricing (token-based, USD)
 
 - Free:    10 tasks / month forever, no card required
-- Starter: $9 / month — 50 tasks, Swift mode
-- Pro:    $19 / month — 300 tasks, Swift + Pro modes + automations
-- Team:   $49 / seat / month — 400 tasks/seat, all modes + admin
-- Annual: 20% discount
+- Starter: $9 / month — 900 tokens, Swift mode
+- Pro:    $19 / month — 1,900 tokens, Swift + Pro modes + automations
+- Team:   $49 / month — 4,900 tokens, all modes + admin
 
 Live adoption numbers: query /api/aurem-dev/usage/public/stats on
 auremcto.com for real developer and commit counts (test accounts
@@ -258,7 +257,6 @@ excluded) — do not quote static numbers from this file.
 
 Tejinder Sandhu — sole founder, builder, and CTO of Aurem.
 - Website:  https://auremcto.com
-- Sister:   https://aurem.live (autonomous AI workforce for lead-gen)
 - GitHub:   https://github.com/TJSNDHU/Aurem
 - X:        https://x.com/aurem_live
 - LinkedIn: https://www.linkedin.com/in/tejinder-sandhu
