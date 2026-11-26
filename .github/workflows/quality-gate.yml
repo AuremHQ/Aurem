@@ -149,22 +149,27 @@ jobs:
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
-          # Iter 306 — emergentintegrations is served from Emergent's
-          # private index (not on public PyPI). Without this URL the
-          # install fails on GH-hosted runners and blocks the whole
-          # gate. Source: `pip install emergentintegrations
-          # --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/`
+          # 2026-11-26 pip fix — requirements.txt is public-PyPI-only
+          # now. emergentintegrations lives in requirements-emergent.txt
+          # and installs only when the EMERGENT_LLM_KEY secret is set
+          # (separate step below).
           # 2026-08-26 — CI Retry mechanism: 3 attempts w/ backoff for
           # this network install only — never applied to test results
           # (see --only-rerun on the test step below for that half).
           for attempt in 1 2 3; do
-            pip install -r requirements.txt \
-              --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+            pip install --no-cache-dir -r requirements.txt \
               && break
             echo "::warning::pip install attempt $attempt failed — retrying in $((attempt * 5))s"
             [ "$attempt" -eq 3 ] && exit 1
             sleep $((attempt * 5))
           done
+          python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
+      - name: Install Emergent-only deps (optional)
+        if: ${{ secrets.EMERGENT_LLM_KEY != '' }}
+        working-directory: backend
+        run: |
+          pip install --no-cache-dir -r requirements-emergent.txt \
+            --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
       # 2026-08-25 — same CI-tooling gap fix as ci.yml: this job runs
       # test_iter212m62_loop_verify.py (via the "loop" keyword filter
       # below) which shells out to real `ruff`/`eslint` binaries;
@@ -355,13 +360,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           for attempt in 1 2 3; do
-            pip install -r requirements.txt \
-              --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+            pip install --no-cache-dir -r requirements.txt \
               && break
             echo "::warning::pip install attempt $attempt failed — retrying in $((attempt * 5))s"
             [ "$attempt" -eq 3 ] && exit 1
             sleep $((attempt * 5))
           done
+          python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
+      - name: Install Emergent-only deps (optional)
+        if: ${{ secrets.EMERGENT_LLM_KEY != '' }}
+        working-directory: backend
+        run: |
+          pip install --no-cache-dir -r requirements-emergent.txt \
+            --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
       - name: Run guardrail suite
         working-directory: backend
         run: python -m pytest tests/guardrails/ -v --tb=short
@@ -545,13 +556,19 @@ jobs:
         working-directory: backend
         run: |
           for attempt in 1 2 3; do
-            pip install -r requirements.txt \
-              --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+            pip install --no-cache-dir -r requirements.txt \
               && break
             echo "::warning::pip install attempt $attempt failed — retrying in $((attempt * 5))s"
             [ "$attempt" -eq 3 ] && exit 1
             sleep $((attempt * 5))
           done
+          python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
+      - name: Install Emergent-only deps (optional)
+        if: ${{ secrets.EMERGENT_LLM_KEY != '' }}
+        working-directory: backend
+        run: |
+          pip install --no-cache-dir -r requirements-emergent.txt \
+            --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
       - name: Boot backend in background
         working-directory: backend
         run: |
@@ -677,13 +694,19 @@ jobs:
           # 2026-08-26 — CI Retry mechanism: network-install retry only,
           # scoped exactly like ci.yml/quality-gate.yml's invariants job.
           for attempt in 1 2 3; do
-            pip install -r requirements.txt \
-              --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+            pip install --no-cache-dir -r requirements.txt \
               && break
             echo "::warning::pip install attempt $attempt failed — retrying in $((attempt * 5))s"
             [ "$attempt" -eq 3 ] && exit 1
             sleep $((attempt * 5))
           done
+          python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
+      - name: Install Emergent-only deps (optional)
+        if: ${{ secrets.EMERGENT_LLM_KEY != '' }}
+        working-directory: backend
+        run: |
+          pip install --no-cache-dir -r requirements-emergent.txt \
+            --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
       - name: Boot backend in background
         working-directory: backend
         run: |
@@ -806,7 +829,13 @@ jobs:
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt \
+          pip install --no-cache-dir -r requirements.txt
+          python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
+      - name: Install Emergent-only deps (optional)
+        if: ${{ secrets.EMERGENT_LLM_KEY != '' }}
+        working-directory: backend
+        run: |
+          pip install --no-cache-dir -r requirements-emergent.txt \
             --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
       - name: Get diff and commit message
         id: diff
