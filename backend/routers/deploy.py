@@ -733,6 +733,12 @@ async def run_deploy(body: DeployRunBody = DeployRunBody(),
                      authorization: str = Header(None)) -> dict[str, Any]:
     me = await current_dev(authorization)
     db = require_db()
+    # Item 12 (X4) — same gap class as delete_config (Part XI 1b):
+    # this endpoint had auth only and no deploy-write check, so a
+    # team member with no deploy access could trigger a deploy.
+    # Same write gate as `save_config` / `delete_config`.
+    from services.team_permissions import check_permission
+    await check_permission(me, "deploy", "write", db=db)
     pid = (body.project_id or "").strip() or None
     cfg = await _find_cfg(db, me["user_id"], pid)
     if not cfg:
@@ -828,6 +834,12 @@ async def get_log(run_id: str,
                   authorization: str = Header(None)) -> dict[str, Any]:
     me = await current_dev(authorization)
     db = require_db()
+    # Item 12 (X4) — same gap class as get_config_for_project
+    # (Part XI 1b): auth only, no deploy-read check, so a team
+    # member with no deploy access could read deploy run logs.
+    # `runs_logs` delegates here, so it inherits this gate.
+    from services.team_permissions import check_permission
+    await check_permission(me, "deploy", "read", db=db)
     doc = await db.aurem_cto_deploy_runs.find_one(
         {"run_id": run_id, "user_id": me["user_id"]},
         {"_id": 0},
@@ -858,6 +870,11 @@ async def get_log(run_id: str,
 async def history(authorization: str = Header(None)) -> dict[str, Any]:
     me = await current_dev(authorization)
     db = require_db()
+    # Item 12 (X4) — same gap class as get_config_for_project
+    # (Part XI 1b): auth only, no deploy-read check, so a team
+    # member with no deploy access could list deploy run history.
+    from services.team_permissions import check_permission
+    await check_permission(me, "deploy", "read", db=db)
     cur = db.aurem_cto_deploy_runs.find(
         {"user_id": me["user_id"]},
         {"_id": 0, "output": 0},
