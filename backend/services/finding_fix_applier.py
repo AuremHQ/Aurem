@@ -42,6 +42,21 @@ from services.project_versions import mark_rolled_back
 logger = logging.getLogger("aurem-dev.finding_fix_applier")
 
 
+def _review_mode_for_user(user: dict | None) -> str:
+    """Audit-2 Prompt 1 (2026-11-26, leak-close #6) — review_mode
+    comes from the caller's plan, not hardcoded "pro". A Starter
+    ($9, modes ["swift"]) fix used to route through the Pro model
+    chain (GLM-5.2 + Claude fallback) — Pro review the $9 plan never
+    paid for. "pro" iff the plan's allowed modes include "pro", else
+    "swift" (fail-closed: unknown/missing tier coerces to free →
+    swift, via subscription_tiers._coerce). Maxx is deliberately NOT
+    used here: the fix path never used it, and Maxx has its own
+    per-tier task cap in _meta.py."""
+    from services.subscription_tiers import allowed_modes_for_tier
+    modes = allowed_modes_for_tier((user or {}).get("tier"))
+    return "pro" if "pro" in modes else "swift"
+
+
 async def _mark_finding_resolved_if_tracked(
     db, *, user_id: str, project_id: str, finding_id: str,
     file: str = "", rule_id: str = "", line=None,
@@ -226,8 +241,13 @@ async def _generate_patched_content(
     finding: dict,
     user_id: Optional[str],
     db=None,
+    review_mode: str = "swift",
 ) -> tuple[str, Optional[str]]:
-    """Calls the LLM. Returns (new_content, error)."""
+    """Calls the LLM. Returns (new_content, error).
+
+    `review_mode` — leak-close #6: the caller's plan decides the
+    model chain (see `_review_mode_for_user`); default "swift" is
+    fail-closed, never "pro"."""
     from services.llm import call_llm_with_meta
 
     rule_id   = finding.get("rule_id") or finding.get("rule") or "unknown"
@@ -281,7 +301,7 @@ async def _generate_patched_content(
             max_tokens=4000,
             mode="code",
             user_id=user_id,
-            review_mode="pro",
+            review_mode=review_mode,
         )
         patched = _strip_fences((meta or {}).get("content", ""))
         if not patched:
@@ -327,11 +347,14 @@ def _untrusted_finding_block(findings: list[dict]) -> str:
 
 async def _generate_patched_content_multi(
     *, path: str, current_content: str, findings: list[dict],
-    user_id: Optional[str], db=None,
+    user_id: Optional[str], db=None, review_mode: str = "swift",
 ) -> tuple[str, Optional[str]]:
     """Part 2b F2 — ONE LLM call covering EVERY finding in this file
     (apply_file_fixes), instead of one call per finding. Same
-    (new_content, error) return shape as `_generate_patched_content`."""
+    (new_content, error) return shape as `_generate_patched_content`.
+
+    `review_mode` — leak-close #6, same rule as the single-finding
+    path: the caller's plan decides; default "swift" (fail-closed)."""
     from services.llm import call_llm_with_meta
 
     untrusted_block = _untrusted_finding_block(findings)
@@ -354,7 +377,7 @@ async def _generate_patched_content_multi(
             max_tokens=6000,
             mode="code",
             user_id=user_id,
-            review_mode="pro",
+            review_mode=review_mode,
         )
         patched = _strip_fences((meta or {}).get("content", ""))
         if not patched:
@@ -549,9 +572,10 @@ async def apply_finding_fix(
 
     # Step 2: LLM patch (with Phase-2 recall — past successful fixes
     # for this rule are injected as precedent if `db` is available).
+    # Leak-close #6 — review_mode comes from the caller's plan.
     patched, llm_err = await _generate_patched_content(
         path=path, current_content=content, finding=finding, user_id=user_id,
-        db=db,
+        db=db, review_mode=_review_mode_for_user(user),
     )
     if llm_err == "llm_no_change":
         if not scanner_checkable:
@@ -658,6 +682,7 @@ async def apply_finding_fix(
             retry_patched, retry_err = await _generate_patched_content(
                 path=path, current_content=fresh_content, finding=finding,
                 user_id=user_id, db=db,
+                review_mode=_review_mode_for_user(user),
             )
             if retry_err or _finding_still_present(retry_patched, path, finding):
                 return {"ok": False, "error": retry_err or "patch_did_not_resolve_finding", "file": path}
@@ -907,7 +932,7 @@ async def apply_file_fixes(
 
     patched, llm_err = await _generate_patched_content_multi(
         path=file, current_content=content, findings=active,
-        user_id=user_id, db=db,
+        user_id=user_id, db=db, review_mode=_review_mode_for_user(user),
     )
     if llm_err:
         # Whole-file LLM failure (empty/error/echoed-unchanged
@@ -1010,6 +1035,7 @@ async def apply_file_fixes(
             retry_patched, retry_err = await _generate_patched_content_multi(
                 path=file, current_content=fresh_content, findings=active,
                 user_id=user_id, db=db,
+                review_mode=_review_mode_for_user(user),
             )
             if retry_err:
                 for f in active:

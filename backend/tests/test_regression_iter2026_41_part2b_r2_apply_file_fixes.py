@@ -151,7 +151,7 @@ class TestApplyFileFixesCore:
 
         multi_calls = []
 
-        async def _llm_multi(*, path, current_content, findings, user_id, db):
+        async def _llm_multi(*, path, current_content, findings, user_id, db, review_mode=None):
             multi_calls.append(1)
             out = current_content
             for f in findings:
@@ -190,7 +190,7 @@ class TestApplyFileFixesCore:
             return "orig with BAD_A and BAD_B", None
         monkeypatch.setattr(ffa, "_fetch_file_content", _fetch)
 
-        async def _llm_multi(*, path, current_content, findings, user_id, db):
+        async def _llm_multi(*, path, current_content, findings, user_id, db, review_mode=None):
             # Only fixes rule_a — rule_b's marker never gets added.
             return current_content + "\nFIXED[rule_a]", None
         monkeypatch.setattr(ffa, "_generate_patched_content_multi", _llm_multi)
@@ -222,7 +222,7 @@ class TestApplyFileFixesCore:
             return "orig with BAD_A and BAD_B", None
         monkeypatch.setattr(ffa, "_fetch_file_content", _fetch)
 
-        async def _llm_multi(*, path, current_content, findings, user_id, db):
+        async def _llm_multi(*, path, current_content, findings, user_id, db, review_mode=None):
             return "", "llm_empty_response"
         monkeypatch.setattr(ffa, "_generate_patched_content_multi", _llm_multi)
         monkeypatch.setattr(ffa, "_finding_still_present", _present_by_marker)
@@ -256,7 +256,7 @@ class TestApplyFileFixesCore:
             return "orig with BAD_A and BAD_B", None
         monkeypatch.setattr(ffa, "_fetch_file_content", _fetch)
 
-        async def _llm_multi(*, path, current_content, findings, user_id, db):
+        async def _llm_multi(*, path, current_content, findings, user_id, db, review_mode=None):
             out = current_content
             for f in findings:
                 out += f"\nFIXED[{f['rule_id']}]"
@@ -314,7 +314,7 @@ class TestApplyFileFixesCore:
 
         multi_calls = []
 
-        async def _llm_multi(*, path, current_content, findings, user_id, db):
+        async def _llm_multi(*, path, current_content, findings, user_id, db, review_mode=None):
             multi_calls.append(current_content)
             out = current_content
             for f in findings:

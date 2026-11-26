@@ -225,7 +225,7 @@ def _mock_llm_and_git(monkeypatch, branch_content: dict):
             return files[path], None
         return "", "file_not_found"
 
-    async def _llm_multi(*, path, current_content, findings, user_id, db):
+    async def _llm_multi(*, path, current_content, findings, user_id, db, review_mode=None):
         # The LLM call's OWN prompt embeds current_content (the
         # secret) — that's expected and is the LLM provider's
         # business, not persisted anywhere by AUREM. The "fix"

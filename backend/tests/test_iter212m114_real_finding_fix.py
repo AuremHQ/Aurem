@@ -60,7 +60,7 @@ async def test_apply_finding_fix_happy_path(monkeypatch):
     monkeypatch.setattr(ff, "_fetch_file_content", fake_fetch)
 
     # Mock the LLM patch generator
-    async def fake_llm(*, path, current_content, finding, user_id):
+    async def fake_llm(*, path, current_content, finding, user_id, review_mode=None):
         return ('import os\nAPI_KEY = os.environ.get("AWS_ACCESS_KEY_ID")  # TODO: set env var\n',
                 None)
     monkeypatch.setattr(ff, "_generate_patched_content", fake_llm)
@@ -124,7 +124,7 @@ async def test_apply_finding_fix_rejects_unresolved_patch(monkeypatch):
     async def fake_fetch(*a, **k):
         return "AWS = 'AKIAEXAMPLE'\n", None
     monkeypatch.setattr(ff, "_fetch_file_content", fake_fetch)
-    async def fake_llm(*, path, current_content, finding, user_id):
+    async def fake_llm(*, path, current_content, finding, user_id, review_mode=None):
         # LLM "fixes" it but still leaves an AKIA literal — re-scan trips.
         return "AWS = 'AKIAOTHEREXAMPLE'\n", None
     monkeypatch.setattr(ff, "_generate_patched_content", fake_llm)

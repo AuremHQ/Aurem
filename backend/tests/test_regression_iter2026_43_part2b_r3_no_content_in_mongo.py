@@ -147,7 +147,7 @@ class TestNoPlaintextContentInFindingFixes:
             return f"const KEY = '{_SECRET}'", None
         monkeypatch.setattr(ffa, "_fetch_file_content", _fetch)
 
-        async def _llm(*, path, current_content, finding, user_id, db):
+        async def _llm(*, path, current_content, finding, user_id, db, review_mode=None):
             return "const KEY = os.environ.get('KEY')  # TODO set KEY", None
         monkeypatch.setattr(ffa, "_generate_patched_content", _llm)
         monkeypatch.setattr(ffa, "_finding_still_present",
@@ -187,7 +187,7 @@ class TestNoPlaintextContentInFindingFixes:
             return f"const KEY = '{_SECRET}'\nconst OTHER = 'y'", None
         monkeypatch.setattr(ffa, "_fetch_file_content", _fetch)
 
-        async def _llm_multi(*, path, current_content, findings, user_id, db):
+        async def _llm_multi(*, path, current_content, findings, user_id, db, review_mode=None):
             return "const KEY = os.environ.get('KEY')\nconst OTHER = 'y'", None
         monkeypatch.setattr(ffa, "_generate_patched_content_multi", _llm_multi)
         monkeypatch.setattr(ffa, "_finding_still_present",

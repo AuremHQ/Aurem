@@ -198,7 +198,9 @@ async def _call_llm_with_meta_impl(system: str, user: str,
     # every caller — orchestrator, chat router, loop_engine's council
     # calls — is covered from ONE place, with zero signature change.
     from cto_services.db import get_db
-    from services.llm_cost_breaker import assert_within_cap, record_cost
+    from services.llm_cost_breaker import (
+        assert_within_cap, assert_within_user_monthly_cap, record_cost,
+    )
     from services.loop_token_ledger import current_loop_context
     from services.customer_cost_tracker import estimate_tokens
     from services.ora_chat.cost_tracker import compute_cost_usd
@@ -230,6 +232,51 @@ async def _call_llm_with_meta_impl(system: str, user: str,
             "error_code": detail.get("error_code") or "COST_CAP_REACHED",
             "error": detail.get("message") or "LLM cost cap reached.",
         }
+
+    # Audit-2 Prompt 1 (2026-11-26, leak-close #5) — per-user monthly
+    # cap. `assert_within_user_monthly_cap` ($6.50/user/month) existed
+    # with ZERO call sites repo-wide, so one paid user could burn
+    # several times their plan price in provider tokens. Enforce it
+    # here, next to the global breaker, for non-founder users with a
+    # user_id — same graceful {"ok": False} translation as the global
+    # caps above, so no new raise reaches callers. The founder check
+    # is one indexed dev_users read, same rule as
+    # services/usage.py::get_usage (tier == "founder", is_unlimited,
+    # or founder email): a lookup failure or a missing user doc SKIPS
+    # the check (allows the call), mirroring the Maxx budget check's
+    # "(allowing)" pattern below — a DB hiccup must never 429 the
+    # founder's own turns. db is None (tests) also skips.
+    if user_id and db is not None:
+        _is_founder: bool | None = None
+        try:
+            from services.usage import is_founder_email as _is_founder_email
+            _u = await db.dev_users.find_one(
+                {"user_id": user_id},
+                {"tier": 1, "is_unlimited": 1, "email": 1},
+            )
+            _is_founder = bool(
+                _u
+                and (
+                    _u.get("tier") == "founder"
+                    or _u.get("is_unlimited")
+                    or _is_founder_email(_u.get("email"))
+                )
+            )
+        except Exception as e:                                # noqa: BLE001
+            logger.debug("[leak-close #5] founder check skipped (allowing): %r", e)
+        if _is_founder is False:
+            try:
+                await assert_within_user_monthly_cap(
+                    db, user_id=user_id, est_cost_usd=pre_est_cost,
+                )
+            except HTTPException as e:
+                detail = e.detail if isinstance(e.detail, dict) else {}
+                return {
+                    "ok": False, "provider": None, "content": "",
+                    "mode": mode, "review_mode": review_mode,
+                    "error_code": detail.get("error_code") or "COST_CAP_USER_MONTHLY",
+                    "error": detail.get("message") or "Monthly usage cap reached.",
+                }
 
     with trace_llm_call(
         name="ora.llm.call_llm_with_meta",

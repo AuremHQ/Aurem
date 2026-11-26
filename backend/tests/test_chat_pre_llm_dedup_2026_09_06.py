@@ -75,6 +75,12 @@ async def test_new_request_falls_through_with_none_result(monkeypatch):
     async def _classify(*a, **kw):
         return {"tier": "agentic", "confidence": 0.9}
     monkeypatch.setattr("core.intent_gateway.classify", _classify)
+    # Leak-close #3 (2026-11-26) — the quota check now fails CLOSED
+    # on infra errors, so a test for another branch must stub it
+    # (db=None here would raise inside the real check).
+    async def _quota_ok(*a, **kw):
+        return None  # quota remaining — assert_has_task_budget is a no-op
+    monkeypatch.setattr("services.usage.assert_has_task_budget", _quota_ok)
     outcome = await resolve_pre_llm(
         db=None, user=USER, body=_Body("build me a login page"), bin_ctx=None,
         prior_fix_signal=False, prior_turn_text="", session_summary="",
@@ -162,6 +168,12 @@ async def test_self_bug_short_circuit_unified_shape(monkeypatch):
     async def _classify(*a, **kw):
         return {"tier": "agentic", "confidence": 0.9}
     monkeypatch.setattr("core.intent_gateway.classify", _classify)
+    # Leak-close #3 (2026-11-26) — see test_new_request_falls_through:
+    # this branch test must stub the quota check (db=None would raise
+    # inside the real check, and the infra-failure arm now 503s).
+    async def _quota_ok(*a, **kw):
+        return None  # quota remaining — assert_has_task_budget is a no-op
+    monkeypatch.setattr("services.usage.assert_has_task_budget", _quota_ok)
     monkeypatch.setattr(
         "services.user_report_classifier.is_user_reporting_ora_bug", lambda *a: True,
     )
