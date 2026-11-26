@@ -141,9 +141,15 @@ def select_skills(task_description: str) -> List[tuple[str, str]]:
     return picked
 
 
-def build_skill_context(task_description: str) -> str:
+def build_skill_context(
+    task_description: str,
+    exclude_agent_skills=None,
+) -> str:
     """Returns a single markdown block ready to slot into a system prompt.
-    Empty string when no skills match (no token overhead)."""
+    Empty string when no skills match (no token overhead).
+    `exclude_agent_skills` is passed through to the `.agents/skills`
+    injector only — used by the repo-add first task so the workflow
+    block doesn't duplicate the same slices."""
     picks = select_skills(task_description)
     if not picks:
         return ""
@@ -157,7 +163,8 @@ def build_skill_context(task_description: str) -> str:
     # missing dir or import problem must never break a turn.
     try:
         from services.agent_skills_injector import build_agent_skill_context
-        agent_block = build_agent_skill_context(task_description)
+        agent_block = build_agent_skill_context(
+            task_description, exclude_agent_skills)
     except Exception:
         agent_block = ""
     if agent_block:

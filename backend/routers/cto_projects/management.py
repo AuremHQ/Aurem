@@ -405,6 +405,12 @@ async def add_project(body: AddProject, authorization: str = Header(None)) -> di
         "indexed_at":       None,
         "indexing_started_at": time.time(),
         "created_at": time.time(),
+        # 2026-11-26 — Superpowers repo-add trigger: the project's
+        # FIRST task gets the brainstorm → plan → TDD → verify
+        # workflow block. The worker (worker_api) consumes this flag
+        # on that first task and clears it; older rows (no key) behave
+        # as False — no backfill needed.
+        "superpowers_first_task": True,
     }
     await db.cto_projects.insert_one(doc)
 
