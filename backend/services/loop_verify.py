@@ -242,14 +242,120 @@ async def verify_files(files: list[dict]) -> dict:
     }
 
 
+# Part VI P1 — surgical diff-hunk heal (see _try_surgical_heal).
+# A lint fix is usually one or two lines; asking the LLM for the
+# whole file body for that re-emits (and can drift) every untouched
+# line.  The surgical call is capped at 600 tokens: a whole-file
+# diff cannot fit in that budget, so a truncated reply fails the
+# hunk parse and falls back instead of shipping a partial file.
+_SURGICAL_MAX_ERRORS = 5
+_SURGICAL_MAX_TOKENS = 600
+
+_SURGICAL_SYS = (
+    "You are ORA, an AI engineer in self-heal mode.  A file you "
+    "wrote failed static analysis.  Fix ONLY the reported errors.  "
+    "Reply with a UNIFIED DIFF and nothing else — no commentary, "
+    "no code fences, no full file body.\n\n"
+    "Format (exact):\n"
+    "--- a/<path>\n"
+    "+++ b/<path>\n"
+    "@@ -<start>,<count> +<start>,<count> @@\n"
+    " <unchanged context line>\n"
+    "-<removed line>\n"
+    "+<added line>\n\n"
+    "Rules:\n"
+    "  • Include 3 lines of unchanged context before and after "
+    "each change.\n"
+    "  • Every '-' / ' ' line must match the CURRENT FILE exactly.\n"
+    "  • The @@ counts must match the hunk body exactly.\n"
+    "  • Never reproduce unchanged lines outside a hunk — that is "
+    "the point of the diff.\n"
+    "  • If the fix cannot be expressed as a small diff, reply "
+    "with the single word: FULL-REWRITE"
+)
+
+
+async def _try_surgical_heal(file_obj: dict, lint_errors: list[str],
+                             user_request: str,
+                             user_id: Optional[str],
+                             call_llm_with_meta) -> Optional[str]:
+    """One LLM call for a unified-diff fix.  Returns the healed file
+    body, or None when the caller should fall back to the full-file
+    rewrite (too many errors, model declined, malformed diff, diff
+    does not apply, or the diff changes nothing).  Never raises."""
+    if len(lint_errors) > _SURGICAL_MAX_ERRORS:
+        return None
+    current = file_obj.get("content") or ""
+    if not current:
+        return None
+    user_msg = (
+        f"Original user request:\n{user_request}\n\n"
+        f"File path: {file_obj['path']}\n\n"
+        f"--- CURRENT CONTENT ---\n{current}\n"
+        f"--- END CONTENT ---\n\n"
+        f"--- LINT ERRORS ---\n" + "\n".join(lint_errors[:25]) +
+        "\n--- END ERRORS ---\n\nReturn a unified diff only."
+    )
+    try:
+        meta = await call_llm_with_meta(
+            system=_SURGICAL_SYS, user=user_msg,
+            max_tokens=_SURGICAL_MAX_TOKENS, mode="code",
+            user_id=user_id, review_mode="pro",
+            feature="Self-Heal Retry",
+        )
+    except Exception as e:                              # noqa: BLE001
+        logger.debug("surgical self_heal LLM failed for %s: %r",
+                     file_obj.get("path"), e)
+        return None
+    raw = ((meta or {}).get("content") or "").replace("\r\n", "\n").strip("\n")
+    if not raw or raw == "FULL-REWRITE":
+        return None
+    # Strip stray fences if the model added them despite the instruction.
+    # NOTE: strip newlines only — .strip() would eat a trailing
+    # whitespace-only context line (" ") and break the hunk counts.
+    if raw.startswith("```"):
+        first_nl = raw.find("\n")
+        raw = raw[first_nl + 1:] if first_nl != -1 else raw
+        if raw.endswith("```"):
+            raw = raw[:-3].rstrip("\n")
+    from services.diff_hunk import apply_unified_diff
+    healed = apply_unified_diff(current, raw)
+    if healed is None or healed == current or not healed.strip():
+        return None
+    logger.info(
+        "[self-heal] surgical diff applied for %s (∆bytes=%+d)",
+        file_obj.get("path"), len(healed) - len(current),
+    )
+    return healed
+
+
 async def self_heal(file_obj: dict, lint_errors: list[str],
                     user_request: str,
-                    user_id: Optional[str] = None) -> Optional[str]:
-    """Ask the LLM to rewrite `file_obj['content']` to fix the lint
-    errors.  Returns the new content string, or None if the model
-    refuses / can't parse.  The engine calls this up to 2 times before
-    surfacing to the user (G1)."""
-    from services.llm import call_llm_with_meta
+                    user_id: Optional[str] = None,
+                    call_llm_with_meta=None) -> Optional[str]:
+    """Ask the LLM to fix the lint errors in `file_obj['content']`.
+    Returns the new content string, or None if the model refuses /
+    can't parse.  The engine calls this up to 2 times before
+    surfacing to the user (G1).
+
+    Part VI P1 — tries a surgical unified-diff heal FIRST: a
+    one-line lint fix must not rewrite the whole file.  The diff is
+    applied programmatically, so every line outside the hunk stays
+    byte-identical.  Any surgical failure falls through to the
+    existing full-file rewrite below, unchanged.
+
+    `call_llm_with_meta` is injectable for tests; production passes
+    None and the lazy import below runs, as before.
+    """
+    if call_llm_with_meta is None:
+        from services.llm import call_llm_with_meta
+    # Surgical first — a failed attempt costs one small (600-token)
+    # call and falls back; a hit saves the full rewrite entirely.
+    healed = await _try_surgical_heal(
+        file_obj, lint_errors, user_request, user_id, call_llm_with_meta,
+    )
+    if healed is not None:
+        return healed
     sys_msg = (
         "You are ORA, an AI engineer in self-heal mode.  A file you "
         "wrote failed static analysis.  Rewrite ONLY the file content "
