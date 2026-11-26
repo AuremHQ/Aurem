@@ -175,7 +175,7 @@ class TestC2RevertToctou:
             return {"sha": "whatever_head"}
         monkeypatch.setattr("services.github_api_writer._get_branch_head", _get_branch_head)
 
-        async def _llm_with_real_delay(*, path, current_content, finding, user_id, db):
+        async def _llm_with_real_delay(*, path, current_content, finding, user_id, db, review_mode=None):
             # A real LLM call has genuine latency — this is the exact
             # window C2 says the revert's own fetch-compare could
             # land inside, uncontested, pre-fix.

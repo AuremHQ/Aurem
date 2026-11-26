@@ -407,10 +407,18 @@ _LLM_SYSTEM = (
 )
 
 
-async def _classify_llm(message: str, history: list[dict] | None) -> dict[str, Any]:
+async def _classify_llm(
+    message: str, history: list[dict] | None, user_id: str | None = None,
+) -> dict[str, Any]:
     """Calls the cheapest fast LLM available with a 2 s timeout and a
     hard 15-token output budget. Returns the parsed JSON or a safe
-    fallback if anything blows up."""
+    fallback if anything blows up.
+
+    Audit-2 Prompt 1 (2026-11-26, leak-close #1) — `user_id` is
+    threaded through so the classifier's LLM spend is attributed to
+    the real user instead of billing to "anonymous" (the ledger's
+    fallback when no ambient user is set). None preserves the old
+    behaviour for callers that have no user (tests, synthetic)."""
     import asyncio
     try:
         from services.llm import call_llm
@@ -439,6 +447,9 @@ async def _classify_llm(message: str, history: list[dict] | None) -> dict[str, A
                 system=_LLM_SYSTEM,
                 max_tokens=20,
                 temperature=0.0,
+                # Leak-close #1 — attribute this spend to the real
+                # user; without it the ledger tags it "anonymous".
+                user_id=user_id,
             ),
             timeout=2.0,
         )
@@ -577,7 +588,9 @@ async def classify(
 
     # ── LLM escalation when heuristic is uncertain ────────────────
     if escalate_to_llm and result["confidence"] < 0.75:
-        llm_result = await _classify_llm(message, history)
+        # Leak-close #1 — pass classify()'s own user_id through so
+        # the LLM call is billed to the real user, not "anonymous".
+        llm_result = await _classify_llm(message, history, user_id=user_id)
         # Prefer the LLM if it landed with higher confidence; otherwise
         # keep the heuristic guess but surface the LLM's reasoning.
         if llm_result["confidence"] > result["confidence"]:

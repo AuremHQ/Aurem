@@ -66,6 +66,7 @@ was explicitly authorized):
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -217,6 +218,13 @@ async def resolve_pre_llm(
     _classify_kwargs = dict(history=[], pending_fix=prior_fix_signal)
     if log_ctx:
         _classify_kwargs.update(log_ctx)
+    # Audit-2 Prompt 1 (2026-11-26, leak-close #1) — thread the
+    # caller's user_id into classify() so the LLM fallback is billed
+    # to the real user, not "anonymous". chat_stream's log_ctx already
+    # carries user_id (setdefault keeps it); chat_send passes none,
+    # so this fills it. No db is added — the analytics-logging gap
+    # documented in the module docstring (asymmetry #2) is unchanged.
+    _classify_kwargs.setdefault("user_id", (user or {}).get("user_id"))
     intent_result = await _classify_intent(
         intent_probe_text if intent_probe_text is not None else (body.prompt or ""),
         **_classify_kwargs,
@@ -269,7 +277,11 @@ async def resolve_pre_llm(
     # upgrade offer (see the 2026-09-12 note above) — a free account
     # with quota remaining falls all the way through with `result`
     # still None, so the edit actually runs on "swift" for real.
-    if result is None and tier == "agentic" and not ora_panel:
+    # Audit-2 Prompt 1 (2026-11-26, leak-close #2) — the `and not
+    # ora_panel` exemption is DELETED: Ask Advisor used to skip the
+    # only live task gate entirely, so panel turns ran unmetered.
+    # The panel is now gated exactly like every other agentic turn.
+    if result is None and tier == "agentic":
         from fastapi import HTTPException
         from services.usage import assert_has_task_budget
         try:
@@ -296,10 +308,24 @@ async def resolve_pre_llm(
                     "upgrade_url": _detail.get("upgrade_url") or "/settings",
                 }
         except Exception as _quota_infra_err:                # noqa: BLE001
-            # Fail OPEN on any infra hiccup (DB hiccup, closed loop in
-            # test harnesses, etc) — never let a defensive quota check
-            # crash or block the actual turn it's guarding.
-            logger.warning("fix-quota check skipped (non-402 error): %r", _quota_infra_err)
+            # Audit-2 Prompt 1 (2026-11-26, leak-close #3) — FAIL
+            # CLOSED. A quota check that cannot verify must not let
+            # the turn run unmetered: a DB hiccup used to silently
+            # skip the gate, so an edit ran with NO quota check at
+            # all. The 402 branch above is unchanged (a real
+            # quota-exceeded still short-circuits); only an INFRA
+            # failure (non-HTTPException) now 503s instead of
+            # waving the turn through. Emergency kill-switch:
+            # ORA_QUOTA_FAIL_OPEN=1 restores the old fail-open
+            # behaviour. Default is closed.
+            if (os.environ.get("ORA_QUOTA_FAIL_OPEN") or "").strip().lower() in ("1", "true", "yes"):
+                logger.warning("fix-quota check skipped (non-402 error, ORA_QUOTA_FAIL_OPEN=1): %r", _quota_infra_err)
+            else:
+                logger.warning("fix-quota check failed closed: %r", _quota_infra_err)
+                raise HTTPException(503, {
+                    "error": "quota_check_unavailable",
+                    "message": "Quota check is temporarily unavailable — please try again shortly.",
+                })
 
     # 4) P7-D self-bug short-circuit — the user reporting ORA's OWN
     # UI/reply/panel as broken short-circuits before tier routing,

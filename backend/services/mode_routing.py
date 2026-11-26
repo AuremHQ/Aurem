@@ -128,7 +128,7 @@ def normalize_mode_pill(req_mode: str | None) -> str | None:
     return pill if pill in MODE_PILLS else None
 
 
-def resolve_loop_mode(req_mode: str | None, *, account_has_pro: bool = True) -> str | None:
+def resolve_loop_mode(req_mode: str | None, *, account_has_pro: bool = False) -> str | None:
     """P1k — resolve the user's mode pill for a Loop run.
 
     A loop run is always a real (agentic) code edit, so the pill goes
@@ -139,7 +139,15 @@ def resolve_loop_mode(req_mode: str | None, *, account_has_pro: bool = True) -> 
     already blocks free/starter starts, so that arm is defence in
     depth, not a new gate). Unknown/absent pill → None = full Council.
     No new mode system: this is a 4-line composition of the existing
-    resolver with the loop's fixed tier."""
+    resolver with the loop's fixed tier.
+
+    Defaults to False (FAIL-CLOSED, 2026-11-26 audit Audit-2 Prompt
+    1, leak-close #4): this was the odd one out — its siblings
+    `resolve_model_mode` and `needs_edit_upgrade_offer` already
+    default False, while this defaulted True, silently escalating a
+    free account's loop to Pro when the caller forgot the flag. The
+    sole production caller (routers/loop.py) passes the flag
+    explicitly, so it is unaffected by the flip."""
     pill = normalize_mode_pill(req_mode)
     if pill is None:
         return None

@@ -153,7 +153,7 @@ class TestH1SameFileSequentialReads:
                 return branch_content[branch], None
             return "", "file_not_found"
 
-        async def _llm(*, path, current_content, finding, user_id, db):
+        async def _llm(*, path, current_content, finding, user_id, db, review_mode=None):
             fixed = current_content.replace(
                 "BAD_A" if finding["rule_id"] == "rule_a" else "BAD_B",
                 "GOOD",
@@ -248,7 +248,7 @@ class TestSkipNoChange:
             return "already fixed content", None
         monkeypatch.setattr(ffa, "_fetch_file_content", _fetch)
 
-        async def _llm_no_change(*, path, current_content, finding, user_id, db):
+        async def _llm_no_change(*, path, current_content, finding, user_id, db, review_mode=None):
             return "", "llm_no_change"
         monkeypatch.setattr(ffa, "_generate_patched_content", _llm_no_change)
 

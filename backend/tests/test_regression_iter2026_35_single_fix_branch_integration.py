@@ -210,13 +210,13 @@ def _mock_llm_boundary(monkeypatch, branch_content: dict):
             return files[path], None
         return "", "file_not_found"
 
-    async def _llm(*, path, current_content, finding, user_id, db):
+    async def _llm(*, path, current_content, finding, user_id, db, review_mode=None):
         marker = f"FIXED[{finding.get('rule_id')}]"
         if marker in current_content:
             return "", "llm_no_change"
         return current_content + f"\n{marker}\n", None
 
-    async def _llm_multi(*, path, current_content, findings, user_id, db):
+    async def _llm_multi(*, path, current_content, findings, user_id, db, review_mode=None):
         # Part 2b F2 — apply_file_fixes's one-call-per-file path.
         # Appends the SAME marker convention for every finding passed
         # in this one call, so _not_present's content-aware check

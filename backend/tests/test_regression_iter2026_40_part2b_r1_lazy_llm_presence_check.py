@@ -163,7 +163,7 @@ class TestR1PresenceCheckBeforeLlm:
 
         llm_calls = []
 
-        async def _llm(*, path, current_content, finding, user_id, db):
+        async def _llm(*, path, current_content, finding, user_id, db, review_mode=None):
             llm_calls.append(1)
             raise AssertionError("LLM must never be called when finding is already absent")
         monkeypatch.setattr(ffa, "_generate_patched_content", _llm)
@@ -193,7 +193,7 @@ class TestR1PresenceCheckBeforeLlm:
             return "BAD_STUFF still here", None
         monkeypatch.setattr(ffa, "_fetch_file_content", _fetch)
 
-        async def _llm_no_change(*, path, current_content, finding, user_id, db):
+        async def _llm_no_change(*, path, current_content, finding, user_id, db, review_mode=None):
             return "", "llm_no_change"
         monkeypatch.setattr(ffa, "_generate_patched_content", _llm_no_change)
 
@@ -236,7 +236,7 @@ class TestR1PresenceCheckBeforeLlm:
 
         multi_calls = []
 
-        async def _llm_multi(*, path, current_content, findings, user_id, db):
+        async def _llm_multi(*, path, current_content, findings, user_id, db, review_mode=None):
             multi_calls.append([f["rule_id"] for f in findings])
             return current_content.replace("BAD_B", "GOOD_B"), None
         monkeypatch.setattr(ffa, "_generate_patched_content_multi", _llm_multi)

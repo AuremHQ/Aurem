@@ -126,9 +126,13 @@ def test_resolve_loop_mode(req_mode, account_has_pro, env, expected, monkeypatch
 
 
 @pytest.mark.parametrize("pill,attempt,expected", [
-    ("swift", 1, True),    # resolves to pro → single-model
+    # Leak-close #4 (2026-11-26) — resolve_loop_mode's default is
+    # now fail-closed (False), so a bare "swift" pill STAYS swift
+    # instead of escalating to pro; swift is still a single-model
+    # mode, so the gate outcome is unchanged.
+    ("swift", 1, True),    # stays swift → single-model
     ("pro", 1, True),
-    ("maxx", 1, False),    # maxx keeps the full Council
+    ("maxx", 1, False),   # maxx keeps the full Council
     (None, 1, False),      # unknown pill → full Council
     ("turbo", 1, False),   # garbage pill → full Council
     ("swift", 2, False),   # retry escalates to the full Council

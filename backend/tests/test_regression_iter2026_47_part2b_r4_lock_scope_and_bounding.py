@@ -107,7 +107,7 @@ class TestLockScopeNarrowedAroundSlowWork:
         in_flight = set()
         overlap_observed = {"seen": False}
 
-        async def _slow_llm(*, path, current_content, finding, user_id, db):
+        async def _slow_llm(*, path, current_content, finding, user_id, db, review_mode=None):
             in_flight.add(path)
             if len(in_flight) >= 2:
                 overlap_observed["seen"] = True
