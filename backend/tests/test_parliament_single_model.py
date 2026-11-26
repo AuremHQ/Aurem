@@ -187,8 +187,13 @@ def _loop_engine_src():
 
 
 def test_loop_engine_has_mode_field():
+    # NOTE (folded tree, CONFLICT 2 — Teji's decision): the findings
+    # line `self.mode: Optional[str] = None` was DELETED from
+    # __init__ because it overwrote part13's assignment and single-
+    # model routing never fired. The mode field now lives as
+    # part13's constructor assignment below — same intent, live code.
     src = _loop_engine_src()
-    assert "self.mode: Optional[str] = None" in src
+    assert 'self.mode = (mode or "").strip().lower() or None' in src
 
 
 def test_loop_engine_passes_attempt_and_single_model_flag():

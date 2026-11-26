@@ -167,7 +167,12 @@ def _build_context_string(brain: dict) -> str:
         recent_commits = commits[-6:]
         commit_lines = []
         for ev in recent_commits:
-            desc = (ev.get("description") or "").strip().splitlines()[0][:120]
+            # Part XII (c1): `"".splitlines()` is `[]`, so `[0]` raised
+            # IndexError on empty / whitespace-only / missing / None
+            # descriptions — and get_brain_context has no guard around
+            # this call, so one empty commit poisoned the whole read.
+            desc_lines = (ev.get("description") or "").strip().splitlines()
+            desc = (desc_lines[0] if desc_lines else "")[:120]
             files = ev.get("files") or []
             file_blob = ", ".join(f"`{f}`" for f in files[:5])
             if len(files) > 5:
@@ -254,7 +259,13 @@ async def update_brain_after_commit(
             }
         }
 
-        # If correction was applied, track as potential recurring bug
+        # If correction was applied, track as potential recurring bug.
+        # Part XII (c2): the old loop ASSIGNED
+        # `update_ops["$push"]["recurring_bugs"] = {...}` per issue,
+        # so with two new issues only the LAST survived the final
+        # update_one. Accumulate into one $each list and set $push
+        # once, after the loop.
+        new_bugs: list[dict] = []
         if was_correction_applied and issues_found:
             for issue in issues_found[:2]:
                 # Increment count if already exists
@@ -268,11 +279,17 @@ async def update_brain_after_commit(
                         {"$inc": {"recurring_bugs.$.count": 1}}
                     )
                 else:
-                    update_ops.setdefault("$push", {})
-                    update_ops["$push"]["recurring_bugs"] = {
-                        "$each": [{"description": issue, "fix_applied": "auto-corrected by Claude", "count": 1}],
-                        "$slice": -20,
-                    }
+                    new_bugs.append({
+                        "description": issue,
+                        "fix_applied": "auto-corrected by Claude",
+                        "count": 1,
+                    })
+            if new_bugs:
+                update_ops.setdefault("$push", {})
+                update_ops["$push"]["recurring_bugs"] = {
+                    "$each": new_bugs,
+                    "$slice": -20,
+                }
 
         await db["project_brains"].update_one(
             {"project_id": project_id},

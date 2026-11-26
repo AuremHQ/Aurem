@@ -17,6 +17,7 @@ N skills per task to keep total budget < ~3K tokens.
 """
 from __future__ import annotations
 import os
+import re
 from functools import lru_cache
 from typing import List
 
@@ -69,19 +70,53 @@ _ALWAYS_INJECT = ("security-review.md", 1000)
 
 
 @lru_cache(maxsize=16)
+def _load_skill_cached(filename: str, char_cap: int, mtime: float) -> str:
+    """Disk-load a skill file once per mtime, then memoise. Returns
+    sliced content. Part XII (b3): the cache key includes the file's
+    mtime — see `_load_skill` for why the old error-caching shape
+    was wrong."""
+    path = os.path.abspath(os.path.join(_SKILLS_DIR, filename))
+    with open(path, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    if len(text) > char_cap:
+        text = text[:char_cap] + "\n…(truncated)"
+    return text
+
+
 def _load_skill(filename: str, char_cap: int) -> str:
-    """Disk-load a skill file once, then memoise. Returns sliced content."""
+    """Disk-load a skill file, memoised by (filename, cap, mtime).
+
+    Part XII (b3): the old `@lru_cache` sat directly on this loader,
+    so a load ERROR (`""`) was cached for the life of the process —
+    a skill file created later on disk was never picked up, and an
+    edited skill was invisible until restart. Now a missing file
+    returns `""` WITHOUT touching the cache, and an edit changes the
+    mtime key, so the new content loads on the next call."""
     path = os.path.abspath(os.path.join(_SKILLS_DIR, filename))
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            text = fh.read()
-        if len(text) > char_cap:
-            text = text[:char_cap] + "\n…(truncated)"
-        return text
-    except FileNotFoundError:
+        mtime = os.stat(path).st_mtime
+    except OSError:
         return ""
-    except Exception:
+    try:
+        return _load_skill_cached(filename, char_cap, mtime)
+    except OSError:
         return ""
+
+
+# Back-compat for callers/tests that cleared the old loader cache.
+_load_skill.cache_clear = _load_skill_cached.cache_clear  # type: ignore[attr-defined]
+_load_skill.cache_info = _load_skill_cached.cache_info  # type: ignore[attr-defined]
+
+
+def _matches_keyword(task: str, kw: str) -> bool:
+    """Word-boundary keyword match (Part XII b2). A bare `in` check
+    let `"ui"` match `"build"`/`"require"`/`"suite"` and `"rest"`
+    match `"restart"`/`"interest"` — pure false positives. `\\b`
+    handles single words and multi-word triggers (`"rate limit"`,
+    `"credit card"`) alike."""
+    if not kw:
+        return False
+    return re.search(r"\b" + re.escape(kw) + r"\b", task) is not None
 
 
 def select_skills(task_description: str) -> List[tuple[str, str]]:
@@ -92,7 +127,7 @@ def select_skills(task_description: str) -> List[tuple[str, str]]:
     for triggers, filename, cap in _INJECTION_RULES:
         if filename in seen_files:
             continue
-        if any(kw in task for kw in triggers):
+        if any(_matches_keyword(task, kw) for kw in triggers):
             content = _load_skill(filename, cap)
             if content:
                 picked.append((filename, content))

@@ -121,8 +121,15 @@ async def execute(
             # Neutral message the LLM is allowed to relay verbatim:
             "llm_facing":    f"Tool {tool_name} could not complete.",
         }
-    from services.interaction_contract import enabled
-    if enabled() and isinstance(result, dict) and result.get("ok") is False:
+    if isinstance(result, dict) and result.get("ok") is False:
+        # Part XII (c3): unwrapping an inner `ok: False` is now
+        # UNCONDITIONAL. It used to sit behind `enabled()` —
+        # `INTERACTION_CONTRACT_V1=1`, default OFF — so with default
+        # config a failed tool came back as outer `ok: True` with the
+        # failure buried in `data`, and `collect_signals()` (which
+        # filters on `not r.get("ok")`) never saw it. A failed tool
+        # reporting success is a correctness bug, not a contract
+        # change, so the flag no longer gates this branch.
         return {
             "ok": False, "tool": tool_name, "data": result,
             "system_signal": result.get("system_signal") or "unknown_error",

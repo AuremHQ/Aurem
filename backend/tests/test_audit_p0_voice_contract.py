@@ -71,11 +71,18 @@ def _install_stubs():
                 if _name == "classify_intent" else (lambda *a, **k: None))
     ch._persist_turn = _async_none
     ch.classify_intent = lambda *a, **k: "A"
+    # P1/B9 (folded tree): misc.py imports CHAT_TURNS_RETENTION from
+    # chat_helpers at module level — the real value is 200
+    # (services/chat_helpers.py:837), so the stub must provide it.
+    ch.CHAT_TURNS_RETENTION = 200
     sys.modules.setdefault("services.chat_helpers", ch)
 
-    # services.usage: is_founder_email (misc.py, stream.py)
+    # services.usage: is_founder_email (misc.py, stream.py);
+    # assert_has_budget — stream.py imports it at module level
+    # since P1/L1 (was a function-scope import inside chat_stream).
     usage = types.ModuleType("services.usage")
     usage.is_founder_email = lambda *a, **k: False
+    usage.assert_has_budget = _async_none
     sys.modules.setdefault("services.usage", usage)
 
     # services.repo_context: get_repo_context (turn.py, stream.py)
