@@ -16,6 +16,13 @@ Loop engine uses the Parliament healer (Iter 212m-150), not
 `self_heal` is called (it is still exported and directly tested).
 The standalone `services/diff_hunk.py` applier is there for the
 Parliament healer to adopt in a follow-up.
+
+Rebase note (2026-11-26, onto main 8a7af354 / PR #375): the
+fallback full-rewrite budget in these tests is 32000, not 2500 —
+#375's backend lane B2 raised `self_heal`'s max_tokens 2500→32000.
+The stub scripts and call-sequence assertions were updated to
+match; the behaviour asserted (surgical 600 first, full rewrite
+on fallback) is unchanged.
 """
 from __future__ import annotations
 
@@ -325,10 +332,10 @@ async def test_self_heal_surgical_one_line_fix():
 
 @pytest.mark.asyncio
 async def test_self_heal_falls_back_when_diff_garbage():
-    llm = _StubLLM({600: "not a diff at all", 2500: FULL_REWRITE})
+    llm = _StubLLM({600: "not a diff at all", 32000: FULL_REWRITE})
     out = await _heal(llm)
     assert out == FULL_REWRITE.strip()  # fallback path .strip()s content (pre-existing)
-    assert llm.calls == [600, 2500]
+    assert llm.calls == [600, 32000]
 
 
 @pytest.mark.asyncio
@@ -344,43 +351,43 @@ async def test_self_heal_falls_back_when_diff_does_not_apply():
         "+    return a + b  # fixed",
         " ",
     )
-    llm = _StubLLM({600: bad_diff, 2500: FULL_REWRITE})
+    llm = _StubLLM({600: bad_diff, 32000: FULL_REWRITE})
     out = await _heal(llm)
     assert out == FULL_REWRITE.strip()  # fallback path .strip()s content (pre-existing)
-    assert llm.calls == [600, 2500]
+    assert llm.calls == [600, 32000]
 
 
 @pytest.mark.asyncio
 async def test_self_heal_falls_back_on_full_rewrite_decline():
-    llm = _StubLLM({600: "FULL-REWRITE", 2500: FULL_REWRITE})
+    llm = _StubLLM({600: "FULL-REWRITE", 32000: FULL_REWRITE})
     out = await _heal(llm)
     assert out == FULL_REWRITE.strip()  # fallback path .strip()s content (pre-existing)
-    assert llm.calls == [600, 2500]
+    assert llm.calls == [600, 32000]
 
 
 @pytest.mark.asyncio
 async def test_self_heal_skips_surgical_when_many_errors():
-    llm = _StubLLM({2500: FULL_REWRITE})
+    llm = _StubLLM({32000: FULL_REWRITE})
     out = await _heal(llm, errors=[f"bad.py:{i}: E501" for i in range(6)])
     assert out == FULL_REWRITE.strip()  # fallback path .strip()s content (pre-existing)
     # Surgical never attempted: single full-rewrite call only.
-    assert llm.calls == [2500]
+    assert llm.calls == [32000]
 
 
 @pytest.mark.asyncio
 async def test_self_heal_returns_none_when_both_fail():
-    llm = _StubLLM({600: "garbage", 2500: ""})
+    llm = _StubLLM({600: "garbage", 32000: ""})
     out = await _heal(llm)
     assert out is None
-    assert llm.calls == [600, 2500]
+    assert llm.calls == [600, 32000]
 
 
 @pytest.mark.asyncio
 async def test_self_heal_surgical_exception_falls_back():
-    llm = _StubLLM({600: "raise", 2500: FULL_REWRITE})
+    llm = _StubLLM({600: "raise", 32000: FULL_REWRITE})
     out = await _heal(llm)
     assert out == FULL_REWRITE.strip()  # fallback path .strip()s content (pre-existing)
-    assert llm.calls == [600, 2500]
+    assert llm.calls == [600, 32000]
 
 
 @pytest.mark.asyncio
@@ -400,7 +407,7 @@ async def test_self_heal_rejects_diff_that_empties_file():
         "-def mul(a, b):",
         "-    return a * b",
     )
-    llm = _StubLLM({600: wipe, 2500: FULL_REWRITE})
+    llm = _StubLLM({600: wipe, 32000: FULL_REWRITE})
     out = await _heal(llm)
     assert out == FULL_REWRITE.strip()  # fallback path .strip()s content (pre-existing)
-    assert llm.calls == [600, 2500]
+    assert llm.calls == [600, 32000]

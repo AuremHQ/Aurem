@@ -8,7 +8,17 @@ directory so user code never leaves /tmp.
 API:
     verify_files([{"path": "...", "content": "..."}, ...]) -> dict
         {
-          "ok":      bool,
+          "ok":      bool,  # False if ANY row failed OR its linter
+                            # binary was missing (rc=127, P1 fix B7) —
+                            # a missing binary is an environment
+                            # failure, not a pass; the Loop then
+                            # self-heals / pauses (G1) instead of
+                            # shipping unverified. Unmapped-extension
+                            # skips still keep ok=True (there is no
+                            # linter that could have run).
+          "verified": bool,  # top-level roll-up: True only when a
+                            # real linter actually ran on EVERY row.
+          "unverified": [path, ...],  # rows with verified=False.
           "results": [{
               "path": str, "ok": bool, "linter": "ruff" | "eslint" | "skip",
               "verified": bool,  # Part B · W3 2026-08 (R2) — True only
@@ -16,9 +26,11 @@ API:
                                  # for "skip" rows (unmapped extension or
                                  # linter binary missing) — an honest,
                                  # additive signal separate from `ok`
-                                 # (which stays True for skips so the
-                                 # loop doesn't over-block on files it
-                                 # simply can't check yet).
+                                 # (which stays True for unmapped-
+                                 # extension skips so the loop doesn't
+                                 # over-block on files it simply can't
+                                 # check yet; it is False for a missing
+                                 # binary, B7).
               "stdout": str, "stderr": str,
           }, ...],
           "errors":  [<flattened error strings>],
@@ -65,9 +77,10 @@ async def _run(cmd: list[str], cwd: str, timeout: float = _SUBPROCESS_TIMEOUT_S)
 
     Return-value contract: `(returncode, stdout_bytes, stderr_bytes)`.
     A missing binary returns rc=127 (POSIX "command not found") with
-    a self-describing stderr; `_lint_one` then treats it as a soft
-    skip (same code path as an unmapped extension) so the Loop
-    continues to the Ship phase instead of dying.
+    a self-describing stderr; `_lint_one` then reports the file as
+    NOT verified (row ok=False, B7 — a missing binary is an
+    environment failure, not a pass), so the Loop self-heals / pauses
+    instead of shipping it as "verified".
     """
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -126,7 +139,8 @@ async def verify_files(files: list[dict]) -> dict:
     files = [f for f in (files or [])
              if isinstance(f, dict) and f.get("path") and f.get("content") is not None]
     if not files:
-        return {"ok": True, "results": [], "errors": []}
+        return {"ok": True, "verified": True, "unverified": [],
+                "results": [], "errors": []}
 
     sandbox = tempfile.mkdtemp(prefix="loop_verify_")
     # Cap concurrent linter subprocesses.  4 is generous for our pod
@@ -165,18 +179,27 @@ async def verify_files(files: list[dict]) -> dict:
         async with sem:
             rc, so, se = await _run([tool, *flags, disk_path], cwd=sandbox)
         # Iter 212m-166 — rc=127 = linter binary missing on this pod.
-        # Treat as a soft skip so the Loop continues to Ship instead of
-        # crashing.  Same shape as the `linter=skip` branch above.
+        # P1 audit fix (2026-11-25, B7): this used to be a soft skip
+        # with row ok=True, so an all-skipped batch reported top-level
+        # ok=True and the ship-gate read it as a pass while NO file
+        # had actually been checked. A missing binary is an
+        # environment failure, not "nothing to check": the row is now
+        # ok=False (and the failure is listed in `errors`), so the
+        # top-level ok flips False and the Loop self-heals / pauses
+        # (G1) instead of shipping unverified. Deliberately different
+        # from the unmapped-extension branch above, which keeps ok=True
+        # — there no linter exists for the language at all, so there
+        # is nothing broken to fix.
         if rc == 127:
             return ({
                 "path":   rel,
-                "ok":     True,
+                "ok":     False,
                 "linter": "skip",
                 "verified": False,   # R2 · W3 2026-08 — honest: tool missing, no real check ran
                 "error_code": "FILE_LANGUAGE_UNVERIFIED",
                 "stdout": "",
                 "stderr": se.decode(errors="ignore") or f"{tool} not available on runtime pod",
-            }, None)
+            }, f"{rel}: linter '{tool}' not available on runtime pod (rc=127)")
         ok = (rc == 0)
         stdout = so.decode(errors="ignore")
         stderr = se.decode(errors="ignore")
@@ -208,6 +231,12 @@ async def verify_files(files: list[dict]) -> dict:
 
     return {
         "ok":      all(r["ok"] for r in results),
+        # B7 — top-level honest roll-up: True only when a real linter
+        # actually ran on every row. A gate that reads only `ok` can
+        # no longer mistake an all-skipped batch for a pass.
+        "verified": all(r.get("verified", False) for r in results),
+        "unverified": [r["path"] for r in results
+                       if not r.get("verified", False)],
         "results": results,
         "errors":  errors,
     }
@@ -343,9 +372,17 @@ async def self_heal(file_obj: dict, lint_errors: list[str],
         "\n--- END ERRORS ---\n\nReturn the corrected file content only."
     )
     try:
+        # P0 audit fix (2026-11-25, B2) — was a literal
+        # `max_tokens=2500`, which truncated rewrites of large files
+        # mid-syntax (the model must reproduce the WHOLE file). Raised
+        # to 32,000, the same ceiling Parliament councils already
+        # request (core/parliament/councils.py caps at 32_000); the
+        # per-mode clamp that used to sit underneath this is gone too
+        # (services/llm/_meta.py, B1), so the request now reaches the
+        # provider, which enforces its own model maximum.
         meta = await call_llm_with_meta(
             system=sys_msg, user=user_msg,
-            max_tokens=2500, mode="code",
+            max_tokens=32000, mode="code",
             user_id=user_id, review_mode="pro",
             feature="Self-Heal Retry",
         )
