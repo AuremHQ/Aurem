@@ -7,6 +7,13 @@ model-generated code. Risk tiers: READ (P5 tools, no approval),
 REVERSIBLE (one-click approval, ON by default), SENSITIVE (before/
 after diff + explicit approval, OFF by default via ORA_CHAT_SENSITIVE).
 DESTRUCTIVE is intentionally not defined anywhere in this file.
+
+R1 (2026-11-26) — Ora executes tasks: the catalog now also covers
+task execution the backend can already do deterministically — backlog
+edits, an email to the admin, house-rules management. Every new
+action reuses an existing backend function; nothing here writes repo
+files, deploys, deletes, or talks to GitHub — those need a separate
+product + security decision (see FIX-REPORT "needs Teji's call").
 """
 from __future__ import annotations
 
@@ -85,6 +92,41 @@ ACTION_CATALOG = {
         "enabled_by_default": False,
         "idempotency_seconds": 0,
     },
+    # R1 — task execution (2026-11-26). Each reuses an existing
+    # deterministic backend function; the model supplies only the
+    # params, never the code path or the recipient.
+    "update_backlog_item": {
+        "name": "Edit a backlog item",
+        "risk": "reversible",
+        "description": "Edit the title and/or note of an existing backlog item (fix a typo, clarify the task). Give at least one of title/note.",
+        "params_schema": {"id": {"type": "string"}, "title": {"type": "string"}, "note": {"type": "string"}},
+        "enabled_by_default": True,
+        "idempotency_seconds": 0,
+    },
+    "email_admin": {
+        "name": "Email the admin",
+        "risk": "reversible",
+        "description": "Send an email to the founder/admin (ADMIN_EMAIL only — the recipient is never a model parameter) with the given subject and body, via the same Resend path as the digests.",
+        "params_schema": {"subject": {"type": "string"}, "body": {"type": "string"}},
+        "enabled_by_default": True,
+        "idempotency_seconds": 0,
+    },
+    "update_house_rules": {
+        "name": "Update Ora's house rules",
+        "risk": "sensitive",
+        "description": "Replace Ora's own house rules with the given text (max 4000 chars). Versioned — the previous version stays in history and can be restored.",
+        "params_schema": {"rules_text": {"type": "string"}},
+        "enabled_by_default": False,
+        "idempotency_seconds": 0,
+    },
+    "restore_house_rules": {
+        "name": "Restore an earlier house-rules version",
+        "risk": "sensitive",
+        "description": "Restore a previous house-rules version by number. The restore itself is saved as a new version, so history is never destroyed.",
+        "params_schema": {"version": {"type": "integer"}},
+        "enabled_by_default": False,
+        "idempotency_seconds": 0,
+    },
 }
 
 
@@ -118,9 +160,17 @@ async def _check_idempotency(db, action_id: str, params: dict, window_s: int) ->
     return row is not None
 
 
-async def execute_action(db, action_id: str, params: dict) -> dict:
+async def execute_action(db, action_id: str, params: dict,
+                       admin_id: str | None = None) -> dict:
     """Deterministic backend execution — never model-generated code.
-    Returns {"ok": bool, "result"/"error": ...}."""
+    Returns {"ok": bool, "result"/"error": ...}.
+
+    `admin_id` is the approving founder (threaded through by the
+    approve endpoint, which already verified the proposal belongs to
+    them). Only the house-rules actions need it — they write per-admin
+    rows — and they fail closed ("admin_required") without it, so old
+    callers that pass no admin_id keep working for the other actions.
+    """
     spec = ACTION_CATALOG.get(action_id)
     if spec is None:
         return {"ok": False, "error": "undefined_action"}
@@ -149,6 +199,14 @@ async def execute_action(db, action_id: str, params: dict) -> dict:
             return await _set_env(params["key"], params["value"])
         if action_id == "toggle_flag":
             return await _toggle_flag(db, params["flag_name"], bool(params["value"]))
+        if action_id == "update_backlog_item":
+            return await _update_backlog_item(db, params)
+        if action_id == "email_admin":
+            return await _email_admin(params)
+        if action_id == "update_house_rules":
+            return await _update_house_rules(params, admin_id)
+        if action_id == "restore_house_rules":
+            return await _restore_house_rules(params, admin_id)
     except KeyError as e:
         return {"ok": False, "error": "missing_param", "detail": str(e)}
     except Exception as e:  # noqa: BLE001
@@ -224,3 +282,105 @@ async def _toggle_flag(db, flag_name: str, value: bool) -> dict:
     from services.feature_flags import invalidate_cache
     invalidate_cache()
     return {"ok": True, "result": {"flag": flag_name, "before": before, "after": value}}
+
+
+# ── R1 executors (2026-11-26) ─────────────────────────────────────
+async def _update_backlog_item(db, params: dict) -> dict:
+    """Edit the title and/or note of an existing backlog item. Same
+    before/after shape as _set_backlog_status, so the approval card
+    shows exactly what changed."""
+    backlog_id = str(params.get("id") or "").strip()
+    title = str(params.get("title") or "").strip() or None
+    note = str(params.get("note") or "").strip() or None
+    if not backlog_id:
+        return {"ok": False, "error": "missing_param", "detail": "id"}
+    if title is None and note is None:
+        return {"ok": False, "error": "missing_param",
+                "detail": "give at least one of title/note"}
+    before = await db.ora_backlog_items.find_one(
+        {"backlog_id": backlog_id}, {"_id": 0})
+    if before is None:
+        return {"ok": False, "error": "not_found"}
+    update = {"updated_at": time.time()}
+    if title is not None:
+        update["title"] = title
+    if note is not None:
+        update["note"] = note
+    await db.ora_backlog_items.update_one(
+        {"backlog_id": backlog_id}, {"$set": update})
+    return {"ok": True, "result": {"before": before, "after": {**before, **update}}}
+
+
+async def _email_admin(params: dict) -> dict:
+    """Send one email to the founder — and ONLY to the founder. The
+    recipient is ADMIN_EMAIL from the server env, never a model
+    parameter (there is no recipient field in the params_schema at
+    all, so the model cannot redirect it). Reuses the digest's
+    _send_via_resend so there is no second mail path. Returns ok
+    False — never a fake "sent" — when the key is missing or the
+    send fails; the Resend key is known 401 in prod until rotated.
+    """
+    subject = str(params.get("subject") or "").strip()
+    body = str(params.get("body") or "").strip()
+    if not subject or not body:
+        return {"ok": False, "error": "missing_param",
+                "detail": "subject and body are both required"}
+    admin_email = os.environ.get("ADMIN_EMAIL", "").strip()
+    if not admin_email:
+        return {"ok": False, "error": "admin_email_not_configured"}
+    from services.daily_digest import _send_via_resend
+    sent = await _send_via_resend(admin_email, subject, body)
+    if not sent:
+        return {"ok": False, "error": "email_not_sent",
+                "detail": "Resend send failed (check RESEND_API_KEY)"}
+    return {"ok": True, "result": {"sent_to": admin_email, "subject": subject}}
+
+
+def _require_house_rules_admin(admin_id):
+    """House-rules rows are per-admin. No admin, no write — the
+    approve endpoint always supplies the id it already verified."""
+    if not admin_id:
+        return {"ok": False, "error": "admin_required",
+                "detail": "house-rules actions need the approving admin id"}
+    return None
+
+
+async def _update_house_rules(params: dict, admin_id) -> dict:
+    """Replace Ora's own house rules. SENSITIVE by design: this
+    rewrites the instructions Ora itself runs on, so it stays behind
+    the ORA_CHAT_SENSITIVE flag + the approval card (which shows the
+    exact text). The write itself is versioned — history + restore
+    already exist in house_rules.py."""
+    err = _require_house_rules_admin(admin_id)
+    if err:
+        return err
+    text = str(params.get("rules_text") or "").strip()
+    if not text:
+        return {"ok": False, "error": "missing_param", "detail": "rules_text"}
+    from services.ora_chat import house_rules
+    try:
+        out = await house_rules.update(admin_id, text)
+    except ValueError as e:
+        return {"ok": False, "error": "invalid_rules", "detail": str(e)[:200]}
+    return {"ok": True, "result": {"version": out["rules"]["version"],
+                                    "soft_warning": out.get("soft_warning")}}
+
+
+async def _restore_house_rules(params: dict, admin_id) -> dict:
+    """Restore a previous house-rules version. The restore is saved
+    as a NEW version, so history is never destroyed."""
+    err = _require_house_rules_admin(admin_id)
+    if err:
+        return err
+    try:
+        version = int(params.get("version"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "invalid_version",
+                "detail": "version must be an integer"}
+    from services.ora_chat import house_rules
+    try:
+        out = await house_rules.restore(admin_id, version)
+    except ValueError as e:
+        return {"ok": False, "error": "version_not_found", "detail": str(e)[:200]}
+    return {"ok": True, "result": {"version": out["rules"]["version"],
+                                    "soft_warning": out.get("soft_warning")}}

@@ -429,8 +429,13 @@ async def approve_action(body: ApproveActionBody,
         event_type="approved", proposal_id=body.proposal_id,
         approved_ts=time.time())
 
+    # R1 (2026-11-26) — thread the verified admin id through: the
+    # house-rules actions write per-admin rows and fail closed
+    # without it. The proposal was already verified above to belong
+    # to this admin, so this is the same id, not a new trust input.
     result = await _v2_catalog.execute_action(
-        db, proposal["action_id"], proposal["params"])
+        db, proposal["action_id"], proposal["params"],
+        admin_id=user["user_id"])
     await _v2_audit.log_event(
         db, admin_id=user["user_id"], action_id=proposal["action_id"],
         params=proposal["params"], proposed_by=proposal["proposed_by"],
