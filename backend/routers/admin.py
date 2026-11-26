@@ -5,7 +5,16 @@ All routes require a JWT with `is_admin: true`. The admin user is whoever
 matches the email in env `ADMIN_EMAIL`; on login the existing auth router
 sets `is_admin=true` for that user.
 
-Mounted under /api/aurem-dev/admin/* by main.py.
+Part XV — this file is a HELPER-ONLY stub, not a mounted router: its
+`APIRouter(prefix="/admin", ...)` object is constructed below but is
+NEVER `include_router`'d by main.py (0 routes are decorated in this
+file), and its helper functions (`_compute_activation_funnel`,
+`_compute_stage_users`, `_github_app_live_probe`, `_bucket_label`,
+`_run_skill`, `_email_hint`, `_epoch`, `_require_admin`) are imported
+live by the split `admin_*` routers. The old "Mounted under
+/api/aurem-dev/admin/* by main.py" line was stale since the Feb 2026
+Phase 2 split moved every handler out. Do NOT mount this router and
+do NOT "deduplicate" it against admin_bin.py — there is no overlap.
 """
 # arch: allow-http — Founder-scoped health probes to OpenRouter / GitHub (iter 212m-225)
 from __future__ import annotations
@@ -21,10 +30,12 @@ from pydantic import BaseModel
 
 from cto_services.auth import current_dev, require_admin_dep, require_admin
 from cto_services.db import get_db, require_db
-# Iter 212m-71 — 60 s TTL cache for the heavy admin aggregations
-# (activation funnel, dev_users buckets, etc.). Founders click around
-# the admin panel rapidly; without this every click fires 5+ heavy
-# aggregations against Mongo.
+# Part XV — the 60 s TTL cache this comment described (iter 212m-71)
+# was removed in the Feb 2026 Phase 2 split; this file has no cache
+# code at all. The funnel now uses the Mongo-backed SWR cache in
+# services/admin_analytics_cache.py (300 s TTL, bounded staleness),
+# called from routers/admin_users.py; the 60 s TTL that still exists
+# lives in services/route_cache.py (HTTP middleware).
 
 logger = logging.getLogger(__name__)
 # Iter 358 — router-level admin gate (defense-in-depth). EVERY route on
@@ -572,7 +583,9 @@ async def _compute_stage_users(stage_key: str) -> dict:
 
 async def _compute_activation_funnel() -> dict:
     """The actual aggregation body.  Pulled out of the route handler
-    so the cache wrapper above can call it on a cold miss."""
+    so the Mongo SWR cache wrapper (services/admin_analytics_cache.py
+    `mongo_swr_cache`, called from routers/admin_users.py) can call it
+    on a cold miss."""
     db = require_db()
 
 
@@ -887,9 +900,14 @@ _SCRIPT_RE = re.compile(r"<\s*/?\s*script[^>]*>", re.IGNORECASE)
 # metadata when dry_run=False).
 
 
-# Iter 212m-71 — admin cache introspection + flush.  Founders use this
-# when they ship a data fix and need to see the impact immediately
-# instead of waiting for the 60 s TTL to roll over.
+# Part XV — the admin cache introspection + flush endpoints this
+# comment described (iter 212m-71) no longer live in this file: they
+# moved to routers/admin_ops_config.py in the Feb 2026 Phase 2 split
+# (GET /admin/cache/stats, GET /admin/cache/analytics-stats,
+# POST /admin/cache/analytics-invalidate, POST /admin/cache/purge,
+# POST /admin/cache/route-invalidate). Founders use those when they
+# ship a data fix and need to see the impact immediately instead of
+# waiting for a TTL to roll over.
 
 
 # ── Iter 212m-234 P0 — Manual re-trigger for the dev_users.created_at

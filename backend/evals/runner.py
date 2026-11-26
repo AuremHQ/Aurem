@@ -82,6 +82,15 @@ def _dispatch_scorers(prompt_spec: dict, response: dict) -> list[ScoreResult]:
             out.append(refusal_scorer(reply, **kwargs))
         elif name == "multistep":
             out.append(multistep_scorer(reply, **kwargs))
+        elif name == "scope":
+            # Part XII (d3-scope): the dispatcher never dispatched
+            # scope_scorer before — a prompt spec asking for "scope"
+            # fell into the `else` as "unknown scorer: scope" even
+            # though the scorer exists (and is imported above). The
+            # only live call was the hard-coded one in
+            # `_project_scoping_isolation_test`. Specs pass
+            # `intended_repo` / `visible_repo` as kwargs.
+            out.append(scope_scorer(**kwargs))
         else:
             out.append(ScoreResult(
                 scorer=name, status=PARTIAL, severity=SOFT,
@@ -580,8 +589,38 @@ async def run(quick: bool = False) -> dict:
     has_llm_key = bool(os.getenv("EMERGENT_LLM_KEY")
                        or os.getenv("OPENROUTER_API_KEY"))
     if not has_llm_key:
+        # Part XII (d3-keys): a keyless run used to return
+        # `ok: True` having run NOTHING — including the offline tests
+        # that need no LLM at all — so a deploy with no API keys
+        # configured "passed" evals vacuously and `main()` exited 0.
+        # Now the offline tests still run (routing regression +
+        # normalizer golden set always; project-scoping isolation
+        # when not --quick, mirroring the full run), the LLM
+        # batteries are recorded as skipped — and the run FAILS.
+        # A keyless run can never gate a deploy green.
+        # (Merged with Part VII fix 2: the knowledge-approval gate
+        # above already ran; its verdict stays in
+        # report["knowledge_approval"]. ok=False here subsumes its
+        # `not _knowledge_blocked` — a keyless run is blocked either
+        # way.)
         report["skipped"] = "no LLM key configured (EMERGENT_LLM_KEY / OPENROUTER_API_KEY)"
-        report["ok"] = not _knowledge_blocked
+        report["routing_regression"] = await _routing_misclassification_test()
+        report["input_normalizer"] = await _input_normalizer_golden_set_test()
+        if not quick:
+            report["project_scoping"] = await _project_scoping_isolation_test()
+        offline_scores: list[ScoreResult] = []
+        for section in ("routing_regression", "input_normalizer",
+                        "project_scoping"):
+            entry = report.get(section)
+            if entry:
+                for s in entry.get("scorers", []):
+                    offline_scores.append(ScoreResult(**s))
+        summary = aggregate(offline_scores)
+        summary["llm_calls_used"] = 0
+        summary["finished_at"] = datetime.now(timezone.utc).isoformat()
+        summary["blocked"] = True
+        report["summary"] = summary
+        report["ok"] = False
         return report
 
     # ── System 1: Quality ──────────────────────────────────────────

@@ -426,6 +426,113 @@ def consume_mfa_pending_token(token: str) -> dict:
     return payload
 
 
+# ── Part VII fix 4(b) — short-lived scoped context-bridge tokens ─────
+# The browser extension used to send the full 7-day session JWT (see
+# `create_token` above) on every context-bridge call. A token that
+# powerful, that long-lived, should never be the credential for a
+# single narrow endpoint. The bridge now gets its own token:
+#   * minted by POST /auth/context-bridge-token from a valid session
+#     JWT (admin-only — see routers/auth.py),
+#   * 15-minute expiry, `scope: "context_bridge"`, accepted ONLY by
+#     POST /admin/ora/context-bridge (enforced by
+#     `require_context_bridge_token` below),
+#   * bound to the parent session via `session_jti` / `session_iat`,
+#     so logout (/auth/logout revokes the session jti) and
+#     revoke-all-sessions (the session barrier) kill outstanding
+#     bridge tokens too — a bridge token never outlives its session's
+#     revocation, only its own 15-minute expiry.
+# The bridge token carries the session's `mfa` claim unchanged so the
+# router-level admin gate (`require_admin_dep`) sees exactly the MFA
+# state the session had — minting must never upgrade or downgrade it.
+CONTEXT_BRIDGE_SCOPE = "context_bridge"
+CONTEXT_BRIDGE_TOKEN_TTL_S = 15 * 60
+
+
+def create_context_bridge_token(
+    user_id: str,
+    email: str,
+    session_jti: str,
+    session_iat: int,
+    is_admin: bool = False,
+    mfa_verified: bool = False,
+) -> str:
+    """Mint a 15-minute `context_bridge`-scoped token bound to the
+    parent session (`session_jti` / `session_iat`). Callers must have
+    already authenticated + authorised the session (the mint endpoint
+    does); this function itself performs no auth checks."""
+    now = int(time.time())
+    payload = {
+        "user_id": user_id,
+        "email": email,
+        "is_admin": is_admin,
+        "mfa": mfa_verified,
+        "scope": CONTEXT_BRIDGE_SCOPE,
+        "session_jti": session_jti,
+        "session_iat": session_iat,
+        "iat": now,
+        "jti": uuid.uuid4().hex,
+        "exp": now + CONTEXT_BRIDGE_TOKEN_TTL_S,
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def require_context_bridge_token(authorization: Optional[str] = None) -> dict:
+    """Validate a context-bridge token and return its payload.
+
+    Runs the full session validation first (`current_dev`: signature,
+    expiry, own-jti revocation, DB enrichment), then enforces the
+    bridge rules: not an MFA-pending token, `scope` must be
+    `"context_bridge"`, and the PARENT session must still be alive —
+    its jti not revoked and its iat not behind the session barrier.
+    The parent-session checks are FAIL-CLOSED (503 on any DB error):
+    unlike `current_dev`'s own revocation gate in this file (fail-open
+    per Iter 307), a token type minted 15 minutes ago must not be
+    trusted when revocation cannot be verified. The bridge handler
+    needs the DB anyway (503 without it), so this costs no
+    availability the endpoint does not already pay.
+    """
+    user = await current_dev(authorization)
+    if user.get("mfa_pending"):
+        raise HTTPException(401, "2FA challenge tokens cannot call the context bridge")
+    if user.get("scope") != CONTEXT_BRIDGE_SCOPE:
+        raise HTTPException(
+            status_code=401,
+            detail="A context-bridge token is required — mint one at POST /auth/context-bridge-token",
+        )
+    session_jti = user.get("session_jti")
+    session_iat = user.get("session_iat")
+    if not session_jti or session_iat is None:
+        raise HTTPException(401, "Malformed context-bridge token")
+    from cto_services.db import get_db
+
+    db = get_db()
+    if db is None:
+        raise HTTPException(
+            503, "Database unavailable — cannot verify context-bridge token"
+        )
+    try:
+        doc = await db["revoked_tokens"].find_one({"jti": session_jti}, {"_id": 1})
+    except Exception:
+        raise HTTPException(
+            503, "Could not verify context-bridge token — try again"
+        )
+    if doc is not None:
+        raise HTTPException(401, "Session revoked — sign in again")
+    try:
+        row = await db.dev_users.find_one(
+            {"user_id": user.get("user_id")},
+            {"session_barrier_at": 1, "_id": 0},
+        )
+    except Exception:
+        raise HTTPException(
+            503, "Could not verify context-bridge token — try again"
+        )
+    barrier = (row or {}).get("session_barrier_at")
+    if barrier and int(session_iat) < int(barrier):
+        raise HTTPException(401, "All sessions revoked — sign in again")
+    return user
+
+
 # FIX #1 (2026-11-17) -- single-use GitHub navigation link tokens.
 # A browser popup (window.open) or plain <a href> navigation cannot send
 # an Authorization header, so the session JWT used to be appended to the

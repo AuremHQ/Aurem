@@ -13,6 +13,7 @@ Tunable thresholds live at the top of the class for future ops work.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any, Optional
 
@@ -30,6 +31,35 @@ _REFUSAL_SIGNALS = (
     "i cannot", "i'm unable to", "i won't",
     "that's not something i can",
 )
+
+# Part XII (d2) — topical-overlap stopwords. Content words are what
+# remain after these are dropped; a reply sharing NO content word
+# with a substantive user question is off-topic by construction.
+_TOPICAL_STOPWORDS = frozenset({
+    "a", "an", "the", "and", "or", "to", "of", "in", "on", "for",
+    "with", "is", "are", "was", "were", "be", "been", "do", "does",
+    "did", "how", "what", "why", "when", "where", "which", "who",
+    "i", "you", "he", "she", "it", "we", "they", "my", "your", "his",
+    "her", "our", "their", "me", "him", "us", "them", "this", "that",
+    "these", "those", "as", "at", "by", "from", "not", "no", "yes",
+    "am", "an", "can", "could", "should", "would", "please", "help",
+    "want", "need", "get", "got", "just", "like", "know", "tell",
+})
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _content_words(text: str) -> set[str]:
+    """Lowercased alphanumeric tokens minus stopwords, lightly
+    stemmed (first 6 chars) so `validate`/`validation` and
+    `password`/`passwords` count as the same topic instead of a
+    miss."""
+    out: set[str] = set()
+    for w in _WORD_RE.findall((text or "").lower()):
+        if w in _TOPICAL_STOPWORDS:
+            continue
+        out.add(w[:6] if len(w) > 5 else w)
+    return out
 
 
 class QualityMonitor:
@@ -106,11 +136,35 @@ class QualityMonitor:
                     flags.append("unexpected_refusal")
                     break
 
+        # 6) Topical overlap with the user's message (Part XII d2).
+        # `_compute_score` used to ignore `user_msg` entirely, so a
+        # fluent banana-bread recipe answering a Signup.jsx question
+        # scored a perfect 1.0 — indistinguishable from a perfect
+        # answer, and the drift detector could never fire on topical
+        # drift. Content-word overlap between question and reply is
+        # now scored: zero overlap on a substantive question cannot
+        # score above 0.5. Skipped when the question has too few
+        # content words to judge (< 3 — e.g. "hello", "thanks" —
+        # where a low-overlap reply can still be fine).
+        topical_overlap: float | None = None
+        user_words = _content_words(user_msg)
+        if len(user_words) >= 3:
+            resp_words = _content_words(response)
+            topical_overlap = len(user_words & resp_words) / len(user_words)
+            if topical_overlap == 0:
+                score -= 0.50
+                flags.append("off_topic_no_overlap")
+            elif topical_overlap < 0.34:
+                score -= 0.20
+                flags.append("low_topical_overlap")
+
         return {
             "score":      max(0.0, min(1.0, score)),
             "flags":      flags,
             "word_count": words,
             "tier":       tier,
+            "topical_overlap": (round(topical_overlap, 3)
+                                if topical_overlap is not None else None),
         }
 
     # ── Persistence ──────────────────────────────────────────────

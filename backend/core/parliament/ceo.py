@@ -13,7 +13,7 @@ import time
 from typing import Optional
 
 from . import llm_call as _llm_call_mod
-from .scoring import detect_output_type, CEO_TEMPS, _syntax_invalid
+from .scoring import detect_output_type, CEO_TEMPS, _syntax_invalid, _syntax_valid
 
 logger = logging.getLogger("aurem-dev.parliament")
 
@@ -132,6 +132,57 @@ class CEO:
         )
         if ceo_pick is not None:
             chosen = usable[ceo_pick]
+            # P1k — judge-residual verify gate. The judge only reads
+            # 800-char head excerpts, so it can pick a candidate whose
+            # tail is truncated/broken — and the pre-filter above can
+            # only condemn a candidate when its language is positively
+            # identified (no file context, or an unverified extension,
+            # leaves broken code in the pool, capped below the floor
+            # so it lands here). The pick must pass the same syntax
+            # validity check the scoring gate uses (_syntax_valid in
+            # scoring.py — reused here, not duplicated) before it is
+            # returned as the winner. Fail-closed: an unverified
+            # language cannot pass the check, so its judge pick is
+            # rejected too — a .ts/.go/... file with no verifiable
+            # candidate goes to manual_review instead of shipping the
+            # judge's unverified guess. If another candidate passes,
+            # the best-scoring one wins instead.
+            if context.get("task_type") == "code_fix":
+                _fp = context.get("file_path")
+                if not _syntax_valid(chosen.get("output") or "",
+                                     file_path=_fp):
+                    survivors = [
+                        v for i, v in enumerate(usable) if i != ceo_pick
+                        and _syntax_valid(v.get("output") or "",
+                                          file_path=_fp)
+                    ]
+                    if not survivors:
+                        return {
+                            "status":         "manual_review",
+                            "output":         None,
+                            "winner":         None,
+                            "scores":         scores,
+                            "ceo_picked":     False,
+                            "reasoning":      ("CEO judge pick failed the "
+                                              "syntax verify gate and no "
+                                              "candidate passes it."),
+                            "ceo_temp_key":   output_type,
+                            "ceo_temp_value": ceo_temp,
+                        }
+                    survivors.sort(key=lambda v: (-v["score"], v["temp"]))
+                    chosen = survivors[0]
+                    return {
+                        "status":         "success",
+                        "output":         chosen["output"],
+                        "winner":         chosen["member"],
+                        "scores":         scores,
+                        "ceo_picked":     False,
+                        "reasoning":      ("CEO judge pick failed the syntax "
+                                          "verify gate; fell back to the "
+                                          "best candidate that passes it."),
+                        "ceo_temp_key":   output_type,
+                        "ceo_temp_value": ceo_temp,
+                    }
             return {
                 "status":         "success",
                 "output":         chosen["output"],

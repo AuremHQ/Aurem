@@ -32,10 +32,13 @@ from pydantic import BaseModel
 
 from cto_services.auth import require_admin_dep
 from cto_services.db import get_db, require_db
-# Iter 212m-71 — 60 s TTL cache for the heavy admin aggregations
-# (activation funnel, dev_users buckets, etc.). Founders click around
-# the admin panel rapidly; without this every click fires 5+ heavy
-# aggregations against Mongo.
+# Part XV — the 60 s in-process cache this comment described (iter
+# 212m-71) was removed in the Feb 2026 Phase 2 split. The funnel now
+# uses the Mongo-backed SWR cache in services/admin_analytics_cache.py
+# (300 s TTL, bounded staleness — see mongo_swr_cache); the 60 s TTL
+# that still exists lives in services/route_cache.py (HTTP middleware
+# on /admin/council/stats + /admin/mode-telemetry, etc., manually
+# purgeable via POST /admin/cache/route-invalidate).
 from services.admin_analytics_cache import (
     invalidate as _cache_invalidate,
     stats as _cache_stats,
@@ -285,6 +288,8 @@ async def purge_caches(
       3. MongoDB TTL caches: repo_context_cache, github_issues_cache,
          codebase_index_cache (collections used as caches; safe to drop
          rows — they self-rebuild on next read).
+      4. In-memory HTTP route cache (services/route_cache.py — Part XV;
+         previously TTL-only with no manual purge).
 
     Returns a structured report so the UI can show exactly what landed.
     The frontend then performs its own client-side step (unregister SWs,
@@ -359,6 +364,16 @@ async def purge_caches(
                 }
     else:
         report["mongo_caches"] = {"status": "skipped", "detail": "no DB"}
+
+    # 4. In-memory HTTP route cache (Part XV) — services/route_cache.py.
+    # Previously TTL-only with no manual purge; clearing here forces the
+    # next request to /admin/council/stats etc. to refetch immediately.
+    try:
+        from services.route_cache import invalidate as _route_invalidate
+        dropped = _route_invalidate()
+        report["route_cache"] = {"status": "ok", "dropped": dropped}
+    except Exception as e:
+        report["route_cache"] = {"status": "error", "detail": str(e)[:200]}
 
     return {"ok": True, "report": report}
 
@@ -1197,6 +1212,23 @@ async def admin_cache_invalidate(
     key = (body or {}).get("key")
     dropped = _cache_invalidate(key)
     return {"ok": True, "dropped": dropped, "key": key}
+
+
+@router.post("/cache/route-invalidate")
+async def admin_route_cache_invalidate(
+    body: dict, authorization: Optional[str] = Header(None),
+):
+    """Part XV — manual purge for the in-memory HTTP route cache
+    (services/route_cache.py), which was TTL-only before this.
+    `{"path": "/api/aurem-dev/admin/council/stats"}` drops every cached
+    variant of that one route (bare path + all query strings).
+    `{}` drops the whole route cache. Always returns the number dropped.
+    POST /admin/cache/purge clears it too (as part of the full purge)."""
+    await _require_admin(authorization)
+    from services.route_cache import invalidate as _route_invalidate
+    path = (body or {}).get("path")
+    dropped = _route_invalidate(path)
+    return {"ok": True, "dropped": dropped, "path": path}
 
 
 @router.post("/dev/kill-supervised-task/{name}")

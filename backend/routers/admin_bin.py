@@ -13,8 +13,12 @@ spec:
   Section 5: Parliament    ─  /admin/parliament/live
   Boundary probes tile     ─  /admin/boundary-probes
 
-Existing admin.py (3680 LOC) is UNTOUCHED — this file is mounted under
-the same "/admin" prefix so paths compose naturally.
+Existing admin.py is a 999-line HELPER-ONLY stub (0 routes, never
+mounted — the Feb 2026 Phase 2 split moved every handler out into
+the `admin_*` routers; this file's helpers are imported live by
+them). It is UNTOUCHED by this file — this file is mounted under
+the same "/admin" prefix so paths compose naturally. (Part XV: the
+old "3680 LOC" figure in this docstring was stale since the split.)
 
 Reuse:
   • cto_services.auth._require_admin  — every endpoint is admin-gated
