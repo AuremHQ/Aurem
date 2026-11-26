@@ -667,7 +667,14 @@ async def chat_send(
     # default so direct (non-HTTP) callers keep working; FastAPI
     # still injects the real request on HTTP calls. Only used to read
     # the X-Client-TZ header for the clock blocks below.
-    request: Optional[Request] = None,
+    # 2026-11-26 deploy-crash fix: DO NOT write Optional[Request]
+    # here. FastAPI only special-cases the bare `Request` annotation;
+    # Optional[Request] is treated as a query param and crashes
+    # startup with "Invalid args for response field" (Republish
+    # 6e3b2d4, turn.py:662). Plain `Request = None` keeps the
+    # default for direct callers AND still injects on HTTP calls
+    # (verified on pinned fastapi 0.115.0).
+    request: Request = None,
 ) -> dict:
     """Non-streaming chat — returns full response, persists turn.
     If maxx_mode=True, runs Emergent watchdog review after DeepSeek reply."""
