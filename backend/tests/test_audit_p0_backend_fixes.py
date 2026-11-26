@@ -119,7 +119,32 @@ def _stub_orchestrator_imports():
     """services.orchestrator's top-level imports pull tools_bridge /
     local_tools / skill_usage, which are not in this seed tree.
     Stub just those three modules (names exactly as imported) so the
-    REAL orchestrator module loads; nothing under test calls them."""
+    REAL orchestrator module loads.
+
+    Delegating fake (same fix as tests/test_part15_admin_fixes.py):
+    the fake wins for its defined attributes (this file's tests
+    depend on them), and any other attribute falls through to the
+    REAL module so `from <name> import <other>` keeps working for
+    every other test file. A plain real-first import broke this
+    file's own tests; a bare fake broke other files' imports.
+    """
+    import importlib
+
+    def _real_or_stub(name, fake):
+        _real = [None]
+
+        def __getattr__(attr, _name=name, _real=_real):
+            if _real[0] is None:
+                saved = sys.modules.pop(_name, None)
+                try:
+                    _real[0] = importlib.import_module(_name)
+                finally:
+                    if saved is not None:
+                        sys.modules[_name] = saved
+            return getattr(_real[0], attr)
+
+        fake.__getattr__ = __getattr__
+        sys.modules[name] = fake
 
     async def _async_none(*a, **k):
         return None
@@ -133,15 +158,15 @@ def _stub_orchestrator_imports():
     tb.extract_tool_calls = lambda *a, **k: []
     tb.strip_tool_calls = lambda s: s
     tb.detect_unsourced_citations = lambda *a, **k: []
-    sys.modules.setdefault("services.tools_bridge", tb)
+    _real_or_stub("services.tools_bridge", tb)
     lt = types.ModuleType("services.local_tools")
     lt.TOOL_SPECS = []
     lt.invoke_local_tool = _async_none
     lt._is_safe_repo_path = lambda *a, **k: True
-    sys.modules.setdefault("services.local_tools", lt)
+    _real_or_stub("services.local_tools", lt)
     su = types.ModuleType("services.skill_usage")
     su.log_skill_use = lambda *a, **k: None
-    sys.modules.setdefault("services.skill_usage", su)
+    _real_or_stub("services.skill_usage", su)
 
 
 def test_b4_max_calls_per_tool_per_turn_is_10():

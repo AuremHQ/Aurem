@@ -45,6 +45,7 @@ guard module itself imports only fastapi and needs no stub.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import sys
 import types
 from pathlib import Path
@@ -78,6 +79,33 @@ def _db_with(*docs):
 
 
 # ── Stub modules (must exist BEFORE importing routers.chat.*) ────────
+def _real_or_stub(name, fake):
+    """Install `fake` for `name`, with any attribute NOT defined on
+    the fake delegating to the REAL module (same fix as
+    tests/test_part15_admin_fixes.py). The tests in this file depend
+    on the fake behaviours, so the fake must win for its defined
+    attributes; anything else falls through to the real module so
+    `from <name> import <other>` keeps working for every other test
+    file collected after this one. A plain real-first import broke
+    this file's own tests (they need the fake behaviours); a bare
+    fake broke other files' imports.
+    """
+    _real = [None]
+
+    def __getattr__(attr, _name=name, _real=_real):
+        if _real[0] is None:
+            saved = sys.modules.pop(_name, None)
+            try:
+                _real[0] = importlib.import_module(_name)
+            finally:
+                if saved is not None:
+                    sys.modules[_name] = saved
+        return getattr(_real[0], attr)
+
+    fake.__getattr__ = __getattr__
+    sys.modules[name] = fake
+
+
 def _install_stubs():
     async def _async_none(*a, **k):
         return None
@@ -87,14 +115,18 @@ def _install_stubs():
 
     # cto_services.auth: current_dev (misc.py, turn.py, stream.py)
     cto = types.ModuleType("cto_services")
-    cto.__path__ = []
-    sys.modules.setdefault("cto_services", cto)
+    # Real __path__ (not []) so the _real_or_stub __getattr__
+    # delegation can load the real cto_services.* submodule.
+    # An empty __path__ made `importlib.import_module` fail
+    # with ModuleNotFoundError when a fake submodule delegated.
+    cto.__path__ = [str(BACKEND_DIR / "cto_services")]
+    _real_or_stub("cto_services", cto)
     auth = types.ModuleType("cto_services.auth")
     auth.current_dev = lambda authorization=None: _async_user()
-    sys.modules.setdefault("cto_services.auth", auth)
+    _real_or_stub("cto_services.auth", auth)
     dbmod = types.ModuleType("cto_services.db")
     dbmod.get_db = lambda: None
-    sys.modules.setdefault("cto_services.db", dbmod)
+    _real_or_stub("cto_services.db", dbmod)
 
     # services.chat_helpers (misc.py / turn.py / stream.py / worker.py)
     ch = types.ModuleType("services.chat_helpers")
@@ -119,7 +151,7 @@ def _install_stubs():
     # chat_helpers at module level — the real value is 200
     # (services/chat_helpers.py:837), so the stub must provide it.
     ch.CHAT_TURNS_RETENTION = 200
-    sys.modules.setdefault("services.chat_helpers", ch)
+    _real_or_stub("services.chat_helpers", ch)
 
     # services.usage: is_founder_email (misc.py, stream.py);
     # assert_has_budget — stream.py imports it at module level
@@ -127,73 +159,85 @@ def _install_stubs():
     usage = types.ModuleType("services.usage")
     usage.is_founder_email = lambda *a, **k: False
     usage.assert_has_budget = _async_none
-    sys.modules.setdefault("services.usage", usage)
+    _real_or_stub("services.usage", usage)
 
     # services.input_normalizer: ChatBody prompt validator (turn.py)
     inm = types.ModuleType("services.input_normalizer")
     inm.normalize_input = lambda text, *a, **k: {"text": text}
-    sys.modules.setdefault("services.input_normalizer", inm)
+    _real_or_stub("services.input_normalizer", inm)
 
     # services.repo_context: get_repo_context (turn.py, stream.py)
     rc = types.ModuleType("services.repo_context")
     rc.get_repo_context = _async_empty_str
-    sys.modules.setdefault("services.repo_context", rc)
+    _real_or_stub("services.repo_context", rc)
 
     # services.user_response_sanitizer (turn.py, stream.py)
+    # NOTE: sanitize_provider_for_user uses the REAL logic (mock passes
+    # through, every other non-empty value collapses to "ORA") — NOT
+    # an identity lambda. An identity lambda broke the iter413
+    # regression test (real vendor codenames must collapse to "ORA").
+    # The delegating fake falls through to the real module for any
+    # attribute not defined here; sanitize_provider_for_user is
+    # defined here with the real logic so this file's tests see the
+    # same behaviour as production.
     urs = types.ModuleType("services.user_response_sanitizer")
-    urs.sanitize_provider_for_user = lambda s, *a, **k: s
+    urs.sanitize_provider_for_user = lambda s, *a, **k: (
+        "mock" if s == "mock" else ("ORA" if s else "")
+    )
     urs.sanitize_provenance_for_user = lambda s, *a, **k: s
-    sys.modules.setdefault("services.user_response_sanitizer", urs)
+    _real_or_stub("services.user_response_sanitizer", urs)
 
     # services.orchestrator: stubbed (real one is not in the seed tree;
     # the mock path never calls it — the guard + mock return first)
     orch = types.ModuleType("services.orchestrator")
     orch.chat_with_tools = _async_none
     orch.build_timeout_message = lambda *a, **k: ("", None)
-    sys.modules.setdefault("services.orchestrator", orch)
+    _real_or_stub("services.orchestrator", orch)
 
     # services.llm: call_emergent_watchdog (turn.py, stream.py)
     llm = types.ModuleType("services.llm")
     llm.call_emergent_watchdog = _async_none
-    sys.modules.setdefault("services.llm", llm)
+    _real_or_stub("services.llm", llm)
 
     # services.subscription_tiers / loop_beta (turn.py panel fn)
     st = types.ModuleType("services.subscription_tiers")
     st.allowed_modes_for_tier = lambda tier: ["swift", "pro", "maxx"]
-    sys.modules.setdefault("services.subscription_tiers", st)
+    _real_or_stub("services.subscription_tiers", st)
     lb = types.ModuleType("services.loop_beta")
     lb.assert_maxx_daily_budget = _async_none
-    sys.modules.setdefault("services.loop_beta", lb)
+    _real_or_stub("services.loop_beta", lb)
 
     # Lazy imports inside the handlers (auth helper + mock check).
     ltl = types.ModuleType("services.loop_token_ledger")
     ltl.tag_request_surface = lambda *a, **k: None
-    sys.modules.setdefault("services.loop_token_ledger", ltl)
+    _real_or_stub("services.loop_token_ledger", ltl)
     ic = types.ModuleType("services.interaction_contract")
     ic.request_conflict = lambda *a, **k: None
     ic.finalize = lambda *a, **k: None
     ic.new_request_id = lambda: "req-test-1"
     ic.enabled = lambda: False
-    sys.modules.setdefault("services.interaction_contract", ic)
+    _real_or_stub("services.interaction_contract", ic)
     en = types.ModuleType("services.engagement_nudge")
     en.maybe_fire_task_sent = _async_none
-    sys.modules.setdefault("services.engagement_nudge", en)
+    _real_or_stub("services.engagement_nudge", en)
     v2pkg = types.ModuleType("services.ora_chat_v2")
-    v2pkg.__path__ = []
-    sys.modules.setdefault("services.ora_chat_v2", v2pkg)
+    # Real __path__ (not []) so `from services.ora_chat_v2 import
+    # engine` resolves to the real engine.py for other files.
+    v2pkg.__path__ = [str(BACKEND_DIR / "services" / "ora_chat_v2")]
+    _real_or_stub("services.ora_chat_v2", v2pkg)
     v2lc = types.ModuleType("services.ora_chat_v2.llm_client")
     v2lc.is_mock = lambda: True  # wiring tests run the mock path
-    sys.modules.setdefault("services.ora_chat_v2.llm_client", v2lc)
+    _real_or_stub("services.ora_chat_v2.llm_client", v2lc)
 
     # core.task_type: infer_task_type (turn.py, stream.py, worker.py)
     ctt = types.ModuleType("core.task_type")
     ctt.infer_task_type = lambda *a, **k: None
-    sys.modules.setdefault("core.task_type", ctt)
+    _real_or_stub("core.task_type", ctt)
 
     # routers.chat package: dummy `router` (misc.py `from . import router`)
     routers_pkg = types.ModuleType("routers")
     routers_pkg.__path__ = [str(BACKEND_DIR / "routers")]
-    sys.modules.setdefault("routers", routers_pkg)
+    _real_or_stub("routers", routers_pkg)
 
     class _DummyRouter:
         def __getattr__(self, name):
@@ -206,24 +250,24 @@ def _install_stubs():
     chat_pkg = types.ModuleType("routers.chat")
     chat_pkg.__path__ = [str(BACKEND_DIR / "routers" / "chat")]
     chat_pkg.router = _DummyRouter()
-    sys.modules.setdefault("routers.chat", chat_pkg)
+    _real_or_stub("routers.chat", chat_pkg)
 
     # routers.chat.deps: get_current_user_db (misc.py)
     deps = types.ModuleType("routers.chat.deps")
     deps.get_current_user_db = _async_none
-    sys.modules.setdefault("routers.chat.deps", deps)
+    _real_or_stub("routers.chat.deps", deps)
 
     # routers.chat.handoff_guard / watchdog / retries (stream.py)
     hg = types.ModuleType("routers.chat.handoff_guard")
     hg._maybe_guard_shell_handoff_followup = _async_none
     hg._handoff_brief_is_shell_command = lambda *a, **k: False
-    sys.modules.setdefault("routers.chat.handoff_guard", hg)
+    _real_or_stub("routers.chat.handoff_guard", hg)
     wd = types.ModuleType("routers.chat.watchdog")
     wd.consume_worker_queue = _async_none
-    sys.modules.setdefault("routers.chat.watchdog", wd)
+    _real_or_stub("routers.chat.watchdog", wd)
     rt = types.ModuleType("routers.chat.retries")
     rt.run_confidence_gate = _async_none
-    sys.modules.setdefault("routers.chat.retries", rt)
+    _real_or_stub("routers.chat.retries", rt)
 
 
 async def _async_user():

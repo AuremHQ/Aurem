@@ -19,7 +19,18 @@ from typing import Optional
 
 def sanitize_provider_for_user(raw: Optional[str]) -> str:
     """Mirrors frontend/src/lib/providerLabel.js::brandProvider — same
-    contract, same fallback, so the two can never drift apart."""
+    contract, same fallback, so the two can never drift apart.
+
+    One exception: the "mock" sentinel passes through unchanged. It is
+    a *mode* marker, not a vendor/model identity — the mock reply
+    already discloses itself via meta.mock, and the interaction
+    contract pins provider == "mock" for mock turns. The frontend
+    still brands it "ORA" for display (brandProvider("mock") is
+    "ORA"), so what a user sees is unchanged. Every real vendor/model
+    codename still collapses to "ORA"; empty stays "".
+    """
+    if raw == "mock":
+        return "mock"
     return "ORA" if raw else ""
 
 
