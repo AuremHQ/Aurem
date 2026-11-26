@@ -18,22 +18,18 @@ backend.
 
 ## Before you use it in production
 
-`manifest.json`'s `host_permissions` is set to this preview
-environment's URL by default:
-```json
-"host_permissions": ["https://bin-context-pat.preview.emergentagent.com/*"]
-```
-**Change this to your real AUREM domain** (e.g.
-`https://auremcto.com/*`) before loading the extension there, then
-reload it from `chrome://extensions`. This permission is what lets
-the extension's own popup call your API without the browser's normal
-cross-origin restrictions blocking it — it is scoped to your AUREM
-domain only, never the pages you capture from.
+`manifest.json`'s `host_permissions` is `<all_urls>` (founder's
+decision, 2026-11-26 — the ring buffer must run on the vendor portals
+you actually capture from, not just auremcto.com). That is why Chrome
+asks for a broad "read and change all your data on all websites"
+permission at install: the content script runs on every page so it can
+buffer console errors from page load. The popup's API calls still go
+only to the AUREM URL you enter on first run (saved locally).
 
 ## First use
 
 1. Click the extension icon. First run asks for your **AUREM URL**
-   (same domain as above) — saved locally, once.
+   — saved locally, once.
 2. Sign in with your existing AUREM admin/founder email + password.
    The JWT this returns is stored **only in this extension's local
    storage** (`chrome.storage.local`) — nothing new is created on the
@@ -60,23 +56,30 @@ domain only, never the pages you capture from.
   retroactive — the browser already buffers this, so it reflects
   activity from BEFORE you clicked too, up to the browser's buffer
   limit. Shows request name, duration, transfer size.
-- **Console errors**: **NOT retroactive.** With only `activeTab` +
-  `scripting` permissions (no `debugger`, no persistent background
-  script on every site you visit — deliberately, to keep the
-  permission footprint minimal), there is no way to read
-  `console.error` calls that already happened before you clicked.
-  This captures errors that occur DURING the ~4s window after you
-  click — the popup's countdown is your cue to reproduce the issue
-  right then. If you need full historical console capture, that
-  would require the `debugger` permission (shows Chrome's "this
-  extension is debugging this tab" banner) — intentionally left out
-  of this build; ask if you want that traded in.
+- **Console errors**: retroactive **since the ring buffer landed**
+  (Part VII 4(d)). A content script runs on every page from load and
+  buffers `console.error` calls (plus `window.onerror` /
+  `unhandledrejection`) into a per-tab ring (50 entries, 600 chars
+  each, 10 tabs); at click time the popup merges the buffered errors
+  with the live ~4s window and sends at most 20. Errors from before
+  the click ARE now captured — reproduce the issue during the
+  countdown only if it happened before the last page load (navigation
+  starts a fresh buffer). Full historical capture would still require
+  the `debugger` permission (shows Chrome's "this extension is
+  debugging this tab" banner) — intentionally left out of this build;
+  ask if you want that traded in.
 
 ## Security
 
-- Permissions: `activeTab`, `scripting`, `storage` only. No
-  `<all_urls>`, no persistent content scripts, no background page
-  watching your browsing.
+- Permissions: `activeTab`, `scripting`, `storage`, plus
+  `host_permissions: ["<all_urls>"]` (founder's decision,
+  2026-11-26). A content script (`src/content-ring-buffer.js`)
+  runs on every page from `document_start` and buffers console
+  errors locally per tab — that is the ring buffer. Nothing is
+  SENT without a click, and the background service worker only
+  holds the per-tab buffers (in memory + `chrome.storage.session`,
+  cleared on browser close); it never watches or records your
+  browsing beyond those buffered errors.
 - Three independent sanitization passes strip passwords, bearer
   tokens, API keys (`sk-…`, `ghp_…`, AWS keys), and JWT-shaped tokens
   before anything leaves your machine: (1) in the injected capture
@@ -85,13 +88,17 @@ domain only, never the pages you capture from.
   (3) the backend (`routers/admin_context_bridge.py`) runs the SAME
   pattern family again server-side — it never trusts the client's
   "already sanitized" claim alone.
-- Every capture requires an explicit click — nothing runs in the
-  background, nothing auto-captures.
+- Every SEND requires an explicit click — nothing leaves your
+  machine, nothing auto-captures. (The ring buffer does run in the
+  background: it passively buffers console errors per tab from page
+  load, so pre-click errors are available at click time.)
 - Backend endpoint is admin/founder-gated (`require_admin_dep`, the
   same dependency every other `/admin/*` route in this codebase uses).
 
 ## Out of scope (per spec)
 
-No background screen recording, no automated form submission — this
-only ever runs when you click the button, on the tab you're looking
-at, once.
+No background screen recording, no automated form submission — the
+only thing that ever leaves your machine is the one capture you
+send with a click, from the tab you're looking at. (The ring-buffer
+content script runs on every page load, but it only buffers console
+errors locally until you click send.)
