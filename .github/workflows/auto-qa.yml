@@ -25,6 +25,8 @@ jobs:
     name: "Regression locks — ALL past bugs re-verified"
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      EMERGENT_LLM_KEY: ${{ secrets.EMERGENT_LLM_KEY }}
     services:
       mongodb:
         image: mongo:7
@@ -52,7 +54,7 @@ jobs:
           pip install --no-cache-dir -r requirements.txt
           python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
       - name: Install Emergent-only deps (optional)
-        if: ${{ secrets.EMERGENT_LLM_KEY != '' }}
+        if: ${{ env.EMERGENT_LLM_KEY != '' }}
         working-directory: backend
         run: |
           pip install --no-cache-dir -r requirements-emergent.txt \

@@ -125,6 +125,8 @@ jobs:
     name: Fitness-function invariants (always green on main)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      EMERGENT_LLM_KEY: ${{ secrets.EMERGENT_LLM_KEY }}
     services:
       # Iter 347 — the invariants subset includes DB-touching suites;
       # the job env already pointed MONGO_URL at localhost:27017 but
@@ -165,7 +167,7 @@ jobs:
           done
           python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
       - name: Install Emergent-only deps (optional)
-        if: ${{ secrets.EMERGENT_LLM_KEY != '' }}
+        if: ${{ env.EMERGENT_LLM_KEY != '' }}
         working-directory: backend
         run: |
           pip install --no-cache-dir -r requirements-emergent.txt \
@@ -349,6 +351,8 @@ jobs:
     name: Guardrail regression suite (audit rules)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      EMERGENT_LLM_KEY: ${{ secrets.EMERGENT_LLM_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -368,7 +372,7 @@ jobs:
           done
           python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
       - name: Install Emergent-only deps (optional)
-        if: ${{ secrets.EMERGENT_LLM_KEY != '' }}
+        if: ${{ env.EMERGENT_LLM_KEY != '' }}
         working-directory: backend
         run: |
           pip install --no-cache-dir -r requirements-emergent.txt \
@@ -546,6 +550,7 @@ jobs:
       ADMIN_EMAIL: test@aurem.dev
       LOGIN_RATE_PER_MIN: "1000"
       RATE_LIMIT_DISABLED: "1"
+      EMERGENT_LLM_KEY: ${{ secrets.EMERGENT_LLM_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -564,7 +569,7 @@ jobs:
           done
           python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
       - name: Install Emergent-only deps (optional)
-        if: ${{ secrets.EMERGENT_LLM_KEY != '' }}
+        if: ${{ env.EMERGENT_LLM_KEY != '' }}
         working-directory: backend
         run: |
           pip install --no-cache-dir -r requirements-emergent.txt \
@@ -682,6 +687,7 @@ jobs:
       ADMIN_EMAIL: test@aurem.dev
       LOGIN_RATE_PER_MIN: "1000"
       RATE_LIMIT_DISABLED: "1"
+      EMERGENT_LLM_KEY: ${{ secrets.EMERGENT_LLM_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -702,7 +708,7 @@ jobs:
           done
           python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
       - name: Install Emergent-only deps (optional)
-        if: ${{ secrets.EMERGENT_LLM_KEY != '' }}
+        if: ${{ env.EMERGENT_LLM_KEY != '' }}
         working-directory: backend
         run: |
           pip install --no-cache-dir -r requirements-emergent.txt \
@@ -817,6 +823,8 @@ jobs:
     needs: [invariants, frontend-vitest, visual-regression]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      EMERGENT_LLM_KEY: ${{ secrets.EMERGENT_LLM_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -832,7 +840,7 @@ jobs:
           pip install --no-cache-dir -r requirements.txt
           python -c "import fastapi, motor, httpx, jwt; print('import-ok')"
       - name: Install Emergent-only deps (optional)
-        if: ${{ secrets.EMERGENT_LLM_KEY != '' }}
+        if: ${{ env.EMERGENT_LLM_KEY != '' }}
         working-directory: backend
         run: |
           pip install --no-cache-dir -r requirements-emergent.txt \
