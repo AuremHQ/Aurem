@@ -112,6 +112,14 @@ class StreamState:
     # only). Means: nothing was streamed/persisted for this attempt —
     # safe for the caller to reset and retry once automatically.
     zero_tool_timeout_suppressed: bool = False
+    # P1 L7 — set by stream.py's gen() when it spends the single
+    # auto-retry above (attempt 0's zero-tool-call timeout was
+    # suppressed and a fresh attempt 1 is started). Read by
+    # watchdog.py's timeout finalization so the terminal `done`
+    # payload can report `timeout_retry_exhausted: true` — the turn
+    # already burned its one retry and is now in a terminal/paused
+    # state — instead of looking like a first-attempt timeout.
+    timeout_retried: bool = False
 
     # ── retries.py output, read by sse_stream.py after the
     # confidence-mismatch gate runs ──

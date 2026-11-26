@@ -682,6 +682,18 @@ async def chat_send(
     except Exception:                                          # noqa: BLE001
         _user_tz = None
     user, finalize, interaction_request_id, _mock_llm_on = await _chat_send_authenticate_and_tag_request(authorization, body)
+    # P1F (ORA audit P3) — [project_id, session_id] ownership guard at
+    # the router boundary, immediately after auth and before the mock
+    # short-circuit / budget / LLM work: a client-supplied session_id
+    # bound to another project is rejected (403) instead of having
+    # this turn appended to that project's session. A session with no
+    # row yet is a freshly client-minted id and passes (first persist
+    # binds it to this project) — see session_guard.py.
+    from .session_guard import assert_session_belongs_to_project
+    await assert_session_belongs_to_project(
+        get_db(), session_id=body.session_id,
+        project_id=body.project_id, user_id=user["user_id"],
+    )
     # Fix #14 (2026-11-18): Ask Advisor (ora_panel=True or agent='ora') must never
     # take the mock path -- it always goes to the real advisor in worker.py
     # (_advisor_panel) or fails clearly there. The mock is only for non-advisor chat.

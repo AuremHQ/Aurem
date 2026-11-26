@@ -75,6 +75,13 @@ class StartBody(BaseModel):
     # terminal, so loop runs survive a page reload (founder report:
     # "50 runs, chat empty after reload on prod").
     session_id:   Optional[str] = Field(None, max_length=64)
+    # Part XIII · 2(a) — review mode (swift / pro / maxx), threaded
+    # from the ChatPanel picker exactly like /chat/stream already
+    # does. None (omitted) = full Council, as today — the engine
+    # stores it on LoopEngine.mode and persists it on the session.
+    # Anything outside the swift/pro/maxx set is rejected 422 in
+    # start_loop below.
+    mode:         Optional[str] = Field(None, max_length=16)
 
 
 class ConfirmBody(BaseModel):
@@ -101,6 +108,15 @@ async def start_loop(body: StartBody,
     db = get_db()
     if db is None:
         raise HTTPException(503, "DB unavailable")
+    # Part XIII · 2(a) — normalise + validate the review mode BEFORE
+    # any side effect (lock, wallet hold, rate limit). Same swift /
+    # pro / maxx vocabulary as /chat/stream; None = full Council.
+    _mode = (body.mode or "").strip().lower() or None
+    if _mode is not None and _mode not in ("swift", "pro", "maxx"):
+        raise HTTPException(422, {
+            "error":   "invalid_loop_mode",
+            "message": f"Unknown loop mode {_mode!r} — expected swift, pro or maxx.",
+        })
     from services.team_permissions import check_permission
     await check_permission(user, "loop", "write", db=db)
     # Iter 364 — Kill switch (env or DB flag) — hard-off for everyone
@@ -379,8 +395,28 @@ async def start_loop(body: StartBody,
         bin_ctx=_bin_ctx_loop,
         session_id=body.session_id,
         source_findings=source_findings,
+        # Part XIII · 2(a) — thread the validated mode into the
+        # engine (LoopEngine.mode; None = full Council as today).
+        mode=_mode,
     )
     eng.register(engine)
+    # P1k — mode-pill wiring (findings single-model hook). A loop run
+    # is an agentic edit, so the pill goes through the existing
+    # mode-resolution logic (resolve_loop_mode → resolve_model_mode);
+    # swift/pro first attempts then take the single-model path in
+    # _gen_via_parliament, maxx/unknown keep the full Council.
+    # Persisted in the G5 context dict (persisted whole by _doc() on
+    # every transition) so the pill survives the confirm-time
+    # rehydration — lookup_or_rehydrate restores engine.mode from it.
+    # NOTE (folded tree): part13's 422 above already rejects unknown
+    # pills, so resolve_loop_mode only ever sees known pills (or
+    # None) here — its unknown→None arm is defence in depth.
+    from services.mode_routing import resolve_loop_mode
+    _account_has_pro = (
+        is_founder or (str(user.get("tier") or "").lower() in ("pro", "team"))
+    )
+    engine.mode = resolve_loop_mode(body.mode, account_has_pro=_account_has_pro)
+    engine.context["mode"] = engine.mode
     # Iter 365 · Phase 3 — funnel event: first_loop_started.
     try:
         from services.signup_guards import emit_funnel_event
@@ -427,6 +463,9 @@ async def start_loop(body: StartBody,
             "phase":        "plan",
             "plan":         None,  # arrives via SSE stream
             "async_start":  True,
+            # Part XIII · 2(a) — echo the stored mode so the caller
+            # can confirm what the loop runs under (None = Council).
+            "mode":         _mode,
         }
 
     # Legacy sync path — retained behind flag flip for one-deploy rollback.
@@ -1787,11 +1826,18 @@ async def loop_history(
                 for s in rb_steps_raw
             ]
             # Map rollback_status → frontend `state` enum values.
+            # Part XIII · 1 — "drift_detected" gets its OWN state
+            # ("drift_blocked") instead of falling through to the
+            # "running" default: a drift-blocked rollback is terminal
+            # for that attempt (backend attempted nothing), and the
+            # old default rendered it as perpetually in-flight while
+            # hiding the ship row's Retry button.
             rb_terminal = {
                 "done":    "completed",
                 "failed":  "failed",
                 "queued":  "running",
                 "running": "running",
+                "drift_detected": "drift_blocked",
             }.get(str(rb_status).lower(), "running")
             items.append({
                 "loop_id":      loop_id,

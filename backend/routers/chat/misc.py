@@ -11,12 +11,13 @@ import time
 from typing import Optional
 
 from fastapi import Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
 from .deps import get_current_user_db
 from services.chat_helpers import (
+    CHAT_TURNS_RETENTION,
     _build_blocked_followup,
     _build_done_fallback,
     _build_failed_followup,
@@ -553,11 +554,20 @@ async def chat_turn_ship_cancelled(
 
 
 
+# P1 audit fix (2026-11-25, B9) — cap the free-text feedback comment.
+# The feedback write `$set`s one subdoc per turn (it does not append),
+# but the comment string itself had NO length limit, so one oversized
+# comment per turn could bloat the session doc without bound. 2000
+# chars is far above any real "this reply was wrong because…" note.
+_FEEDBACK_COMMENT_MAX_CHARS = 2000
+
+
 class FeedbackBody(BaseModel):
     session_id: str
     turn_index: int       # index within the turns array (assistant turn)
     vote: str             # 'up' | 'down'
-    comment: Optional[str] = None
+    comment: Optional[str] = Field(
+        default=None, max_length=_FEEDBACK_COMMENT_MAX_CHARS)
 
 
 @router.post("/feedback")
@@ -570,18 +580,47 @@ async def chat_feedback(
     user = await current_dev(authorization)
     if body.vote not in ("up", "down"):
         raise HTTPException(400, "vote must be 'up' or 'down'")
+    if body.turn_index < 0:
+        raise HTTPException(400, "turn_index must be >= 0")
     db = get_db()
     if db is None:
         raise HTTPException(503, "Database not connected")
+    # P1 audit fix (2026-11-25, B9) — bounds-check turn_index BEFORE
+    # writing. MongoDB silently creates sparse turns[N] entries on an
+    # out-of-range $set (see the Iter 34 note on /turn/shipped above),
+    # so an unchecked index grows/corrupts the session doc with
+    # null-padded turns — and the old code returned ok True even when
+    # the update matched nothing. Feedback names a SPECIFIC turn, so
+    # unlike /turn/shipped there is no safe fallback turn: out of
+    # range is a 400, not a silent re-target.
+    sess = await db.chat_sessions.find_one(
+        {"session_id": body.session_id, "user_id": user["user_id"]},
+        {"_id": 0, "turns": 1},
+    )
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    turns = sess.get("turns") or []
+    if body.turn_index >= len(turns):
+        raise HTTPException(400, "turn_index out of range")
+    # Belt-and-braces alongside the Field max_length above: a direct
+    # (non-HTTP) caller bypasses Pydantic validation, so truncate at
+    # the write too. Never let one comment grow the doc past the cap.
+    comment = body.comment
+    if comment is not None:
+        comment = comment[:_FEEDBACK_COMMENT_MAX_CHARS]
     set_field = f"turns.{body.turn_index}.feedback"
-    await db.chat_sessions.update_one(
+    res = await db.chat_sessions.update_one(
         {"session_id": body.session_id, "user_id": user["user_id"]},
         {"$set": {set_field: {
             "vote": body.vote,
-            "comment": body.comment,
+            "comment": comment,
             "ts": time.time(),
         }}},
     )
+    if res.matched_count == 0:
+        # Session vanished between the read and the write — do not
+        # report ok True for a write that landed nowhere.
+        raise HTTPException(404, "Session not found")
     return {"ok": True}
 
 
@@ -675,7 +714,14 @@ async def chat_task_followup(
         }
         await db.chat_sessions.update_one(
             {"session_id": body.session_id, "user_id": user["user_id"]},
-            {"$push": {"turns": {"$each": [new_turn], "$slice": -40}},
+            # B9 (2026-11-25): was "$slice": -40 — the Iter 329 bump
+            # to -200 in _persist_turn was never applied here, so a
+            # task-followup write silently dropped history at 40
+            # turns. Shares CHAT_TURNS_RETENTION with _persist_turn
+            # (services/chat_helpers.py) so the two cannot drift
+            # apart again.
+            {"$push": {"turns": {"$each": [new_turn],
+                                 "$slice": -CHAT_TURNS_RETENTION}},
              "$set": {"updated_at": time.time(),
                       "preview": message[:120]}},
         )

@@ -30,6 +30,7 @@ of /api/aurem-dev). The router rejects with JSON-RPC error -32001
 # arch: allow-http — MCP protocol outbound calls are this endpoint's purpose (iter 212m-225)
 from __future__ import annotations
 
+import contextvars
 import logging
 import time
 from typing import Any, Optional
@@ -758,6 +759,49 @@ async def _mcp_ctx_for(user_id: str, project_id: str) -> dict:
     }
 
 
+# ── Part XIV (a4) — MCP write-scope gate ────────────────────────────
+# _tool_write_repo_file used to call local_tools.write_repo_file
+# directly, skipping the Part-C scope gate entirely: an MCP client
+# could write any repo-relative file with no prior read. It now
+# routes through invoke_local_tool with a ctx carrying this MCP
+# session's discovered scope — same gate as the chat path, and the
+# same fail-closed rule (empty scope blocks). Scope is accumulated
+# from this session's own successful read/list/search calls below
+# (a write to a file the session never read is denied); the key is
+# the Mcp-Session-Id (namespaced per user by the dispatcher), so two
+# sessions never share scope. No human-approval step exists on the
+# MCP path — the scope gate is the authorization, as on the chat
+# path; pending_action.py / confirm_execution.py remain the
+# approval-gated model for chat-approved edits and are NOT weakened
+# (they still call write_repo_file directly after a user confirms).
+# NOTE for the combiner: adding a human-approval step to MCP writes
+# would need a pending-action UX on the MCP path — a product
+# decision, not built here.
+_MCP_SESSION_KEY: contextvars.ContextVar[str] = \
+    contextvars.ContextVar("mcp_session_key", default="")
+_MCP_WRITE_SCOPE: dict[str, set[str]] = {}
+
+
+def _mcp_note_discovered(paths) -> None:
+    """Record paths this MCP session successfully read/listed/found
+    as in-scope for later writes. Silently no-ops when no session
+    key is set (direct calls outside the JSON-RPC dispatcher)."""
+    key = _MCP_SESSION_KEY.get("")
+    if not key:
+        return
+    paths = [p for p in (paths or []) if isinstance(p, str) and p]
+    if not paths:
+        return
+    _MCP_WRITE_SCOPE.setdefault(key, set()).update(paths)
+
+
+def _mcp_session_scope() -> set[str]:
+    """This session's discovered write scope (copy — callers must
+    not mutate the store). Empty when the session has read nothing
+    yet, which under the fail-closed scope gate denies writes."""
+    return set(_MCP_WRITE_SCOPE.get(_MCP_SESSION_KEY.get("") or "", set()))
+
+
 async def _tool_read_repo_file(user_id: str, args: dict) -> dict:
     project_id = (args.get("project_id") or "").strip()
     file_path  = (args.get("file_path") or "").strip()
@@ -770,6 +814,9 @@ async def _tool_read_repo_file(user_id: str, args: dict) -> dict:
     r = await read_repo_file(ctx, {"path": file_path})
     if not r.get("ok", True):
         raise RuntimeError(r.get("error") or "read_repo_file failed")
+    # Part XIV (a4) — a successful read puts this file in scope for
+    # a later write in the same MCP session.
+    _mcp_note_discovered([file_path])
     # Iter 212m-175 — sanitise before returning to the LLM. Any line
     # containing a known prompt-injection tripwire is redacted so a
     # malicious file cannot rewrite the LLM's instructions via
@@ -794,6 +841,9 @@ async def _tool_list_repo_files(user_id: str, args: dict) -> dict:
     r = await list_repo_files(ctx, {"path": path})
     if not r.get("ok", True):
         raise RuntimeError(r.get("error") or "list_repo_files failed")
+    # Part XIV (a4) — listed paths join the session's write scope.
+    _mcp_note_discovered(
+        [e for e in (r.get("tree") or []) if isinstance(e, str)])
     return {
         "project_id": project_id,
         "path":       path,
@@ -817,6 +867,11 @@ async def _tool_search_repo(user_id: str, args: dict) -> dict:
     r = await search_repo(ctx, {"pattern": query, "max": max_results})
     if not r.get("ok", True):
         raise RuntimeError(r.get("error") or "search_repo failed")
+    # Part XIV (a4) — files a search matched join the session's
+    # write scope (search_repo matches carry the file in "file").
+    _mcp_note_discovered(
+        [m.get("file") for m in (r.get("matches") or [])
+         if isinstance(m, dict) and m.get("file")])
     return {
         "project_id": project_id, "query": query,
         "matches":    r.get("matches") or [],
@@ -841,13 +896,25 @@ async def _tool_write_repo_file(user_id: str, args: dict) -> dict:
     if not isinstance(content, str):
         raise ValueError("`content` must be a string")
     ctx = await _mcp_ctx_for(user_id, project_id)
-    from services.local_tools import write_repo_file
+    # Part XIV (a4) — route through invoke_local_tool, NOT directly
+    # to write_repo_file: the old direct call skipped the Part-C
+    # scope gate entirely. The ctx carries this MCP session's
+    # discovered scope (prior reads/lists/searches); empty scope
+    # fails closed, so a write to a file the session never read is
+    # denied. A successful write joins the scope for later writes
+    # in the same session. All of write_repo_file's own guards
+    # (traversal, test-file lock, Vanguard, syntax gate) still run
+    # inside invoke_local_tool's dispatch.
+    ctx["scope_files"] = _mcp_session_scope()
+    from services.local_tools import invoke_local_tool
     payload = {"path": file_path, "content": content}
     if commit_msg:
         payload["commit_message"] = commit_msg
-    r = await write_repo_file(ctx, payload)
-    if not r.get("ok", True):
-        raise RuntimeError(r.get("error") or "write_repo_file failed")
+    r = await invoke_local_tool("write_repo_file", payload, ctx)
+    if r is None or not r.get("ok", True):
+        raise RuntimeError(
+            (r or {}).get("error") or "write_repo_file failed")
+    _mcp_note_discovered([file_path])
     return {
         "project_id": project_id, "file_path": file_path,
         "commit_sha": r.get("sha"),
@@ -1480,6 +1547,10 @@ async def _handle_one(
             )
         try:
             t0 = time.monotonic()
+            # Part XIV (a4) — publish this call's session key so the
+            # repo tools can attribute reads/writes to the session's
+            # write scope. Reset in `finally` below.
+            _scope_token = _MCP_SESSION_KEY.set(session_key or "")
             # Iter 212m-175 — populate SESSION_TOOL_CACHE from the
             # call's arguments BEFORE dispatch so a slow tool doesn't
             # delay the classification write. Errors are swallowed so
@@ -1491,7 +1562,10 @@ async def _handle_one(
             except Exception as e:
                 logger.debug("mcp session-cache update failed: %r", e)
 
-            result = await _TOOL_DISPATCH[name](me["user_id"], args)
+            try:
+                result = await _TOOL_DISPATCH[name](me["user_id"], args)
+            finally:
+                _MCP_SESSION_KEY.reset(_scope_token)
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             return _rpc_ok(req_id, {
                 # MCP `tools/call` result shape: a `content` array of
