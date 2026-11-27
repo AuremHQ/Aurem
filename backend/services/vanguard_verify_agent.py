@@ -6,8 +6,9 @@ Iter 111 — Separate Vanguard verify agent (Anthropic-style "defending-
 code-reference-harness"):
 
 > ORA writes code → handed off to a SEPARATE agent (different prompt,
-> different model) → re-reviews the patch for the 25 known vulnerability
-> patterns PLUS its own LLM-grade judgement → only on PASS does the
+> different model) → re-reviews the patch for the known vulnerability
+> patterns (see services/vanguard_scanner.pattern_counts() for the
+> live total) PLUS its own LLM-grade judgement → only on PASS does the
 > patch progress to commit.
 
 Iter 169 — migrated to OpenRouter (anthropic/claude-sonnet-4.5).
@@ -26,7 +27,8 @@ React `dangerouslySetInnerHTML` in a tooltip, etc.). The regex floor
 LLM agent is now advisory for HIGH and only blocks on CRITICAL. Two
 new env vars provide escape hatches:
 
-  VANGUARD_VERIFY_BLOCK_LEVEL = CRITICAL | HIGH | OFF   (default CRITICAL)
+  VANGUARD_VERIFY_BLOCK_LEVEL = OFF | LOW | MEDIUM | HIGH (default: swift
+  MEDIUM, pro/maxx HIGH; legacy CRITICAL → LOW, HIGH → MEDIUM)
   VANGUARD_VERIFY_ENABLED     = 1/0                     (default 1)
 
 Public API
@@ -47,7 +49,9 @@ import logging
 import os
 from typing import Optional
 
-from .vanguard_scanner import scan_file_blocks, has_critical
+from .vanguard_scanner import (
+    scan_file_blocks, has_critical, LOW_SECRET_IDS, ALL_RULE_IDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -695,6 +699,30 @@ async def _e2b_smoke(file_blocks: dict) -> dict:
         return {"pass": True, "skipped": True, "reason": str(e)}
 
 
+def _apply_level_scope(
+    findings: list[dict], level: str,
+) -> tuple[list[dict], list[dict]]:
+    """LOW-level regex scope: keep vendor-shaped secrets only.
+
+    A finding is kept when its rule is in LOW_SECRET_IDS, or when its
+    rule is UNKNOWN (not in the scanner catalog at all — e.g. a test
+    stub's fake rule). Unknown rules are kept fail-closed: silently
+    dropping a finding we do not recognise would be a security hole.
+    At any level other than LOW the list passes through unchanged.
+    Returns (kept, dropped)."""
+    if (level or "").upper() != "LOW":
+        return findings, []
+    kept: list[dict] = []
+    dropped: list[dict] = []
+    for f in findings or []:
+        rule = f.get("name") or f.get("rule") or ""
+        if rule in LOW_SECRET_IDS or rule not in ALL_RULE_IDS:
+            kept.append(f)
+        else:
+            dropped.append(f)
+    return kept, dropped
+
+
 async def verify_patch(
     file_blocks: dict,
     repo_ctx: str = "unknown",
@@ -703,23 +731,31 @@ async def verify_patch(
     base_blocks: Optional[dict] = None,
 ) -> dict:
     """Top-level entrypoint. Combines:
-      1) regex Vanguard scan (the 24 baseline patterns)
+      1) regex Vanguard scan (the full R1 catalog — see
+         services/vanguard_scanner.pattern_counts() for the live total)
       2) separate Vanguard Verify Agent (LLM second opinion)
       3) E2B smoke import if patch has executable Python
 
-    Blocking rule (Iter 212m-41 / 212m-42):
-      • Regex CRITICAL ALWAYS blocks (real secrets / dangerous APIs).
-      • LLM findings block ONLY when their severity meets the
-        configured threshold for the active `mode` (Swift / Pro / Maxx).
-      • E2B smoke-import failure ALWAYS blocks (syntax/import errors).
+    Blocking rule (2026-11-27 Vanguard 28 — levels OFF/LOW/MEDIUM/HIGH):
+      • OFF    — truly off: no regex, no LLM, no E2B. Only an audit
+        log line ("vanguard off"); the patch always passes.
+      • LOW    — regex, vendor-shaped secrets only; no LLM, no E2B.
+      • MEDIUM — full R1 + R2 CRITICAL/HIGH; LLM blocks on CRITICAL
+        only; E2B smoke-import failure blocks.
+      • HIGH   — full R1 + R2 (all) + chains; LLM blocks on
+        CRITICAL+HIGH; E2B blocks.
+      • Regex CRITICAL blocks at MEDIUM/HIGH (real secrets /
+        dangerous APIs). At LOW only vendor-shaped CRITICAL secrets
+        are even scanned, so the floor is the scope itself.
       • 2026-11-25 audit Part IX (d): `agent.pass` in the returned
         payload is the BLOCKING decision (not the reviewer's raw
         self-assessment — that lives in `agent.self_assessed_pass`),
         so the two can never diverge silently. A crashed LLM/E2B
         task fails closed instead of discarding the regex verdict.
-      • Admin can flip the master enabled flag from `/admin/vanguard`
-        to skip the LLM + E2B passes entirely — regex floor still gates
-        on its own CRITICAL findings.
+      • Legacy levels reaching this function directly (CRITICAL/HIGH
+        — e.g. a test stubbing get_mode_settings) are treated as
+        MEDIUM (full flow, LLM CRITICAL-only). Production always
+        normalises them in get_mode_settings first.
 
     Iter 212m-132 — DIFF-AWARE mode.
       When the caller supplies `base_blocks={path: pre_edit_content}`,
@@ -737,6 +773,32 @@ async def verify_patch(
     """
     from .vanguard_config import get_mode_settings
     enabled, block_level = await get_mode_settings(mode)
+    level = (block_level or "MEDIUM").upper()
+
+    # 2026-11-27 — OFF is truly off: nothing runs, nothing blocks.
+    # Checked BEFORE the regex scan (the old code scanned first and
+    # let the regex floor block even when the admin switched Vanguard
+    # off). Only an audit log line is left behind.
+    if not enabled or level == "OFF":
+        logger.info(
+            "vanguard off (mode=%s enabled=%s level=%s) — no scan, pass",
+            mode, enabled, block_level,
+        )
+        return {
+            "pass":     True,
+            "findings": [],
+            "summary":  "vanguard off — no scan (audit only)",
+            "regex":    {"blocked": False, "count": 0,
+                         "skipped_preexisting": [],
+                         "skipped_scope": []},
+            "agent":    {"pass": True, "findings": [],
+                         "summary": "vanguard off"},
+            "e2b":      {"pass": True, "skipped": True,
+                         "reason": "vanguard off"},
+            "mode":     mode,
+            "block_level": "OFF",
+            "diff_mode": False,
+        }
 
     # Iter 212m-132 — compute changed-line map ONCE; reuse for regex
     # filtering AND for the LLM envelope.
@@ -753,10 +815,16 @@ async def verify_patch(
     else:
         regex_findings = regex_findings_all
         regex_skipped  = []
+    # 2026-11-27 — LOW scope: keep vendor-shaped secrets + any finding
+    # whose rule is unknown (fail-closed); drop known non-LOW rules.
+    regex_findings, regex_skipped_scope = _apply_level_scope(
+        regex_findings, level,
+    )
     findings.extend(regex_findings)
     regex_blocked = has_critical(regex_findings)
 
-    if not enabled:
+    if level == "LOW":
+        # Regex-only tier: no LLM, no E2B.
         return {
             "pass":     not regex_blocked,
             "findings": findings,
@@ -765,24 +833,30 @@ async def verify_patch(
                 f"{'BLOCK' if regex_blocked else 'pass'} "
                 f"({len(regex_findings)} findings"
                 + (f", {len(regex_skipped)} pre-existing skipped" if regex_skipped else "")
-                + ") | verify-agent + e2b disabled by admin"
+                + (f", {len(regex_skipped_scope)} out of LOW scope" if regex_skipped_scope else "")
+                + ") | verify-agent + e2b skipped (LOW level)"
             ),
             "regex":    {"blocked": regex_blocked,
                          "count":   len(regex_findings),
-                         "skipped_preexisting": regex_skipped},
-            "agent":    {"pass": True, "findings": [], "summary": "disabled"},
-            "e2b":      {"pass": True, "skipped": True, "reason": "disabled"},
+                         "skipped_preexisting": regex_skipped,
+                         "skipped_scope": regex_skipped_scope},
+            "agent":    {"pass": True, "findings": [],
+                         "summary": "LOW level"},
+            "e2b":      {"pass": True, "skipped": True,
+                         "reason": "LOW level"},
             "mode":     mode,
-            "block_level": "OFF",
+            "block_level": level,
             "diff_mode": line_map is not None,
         }
 
     def _blocks(severity: str) -> bool:
         sev = (severity or "").upper()
-        if block_level == "OFF":
+        if level == "OFF":
             return False
-        if block_level == "HIGH":
+        if level == "HIGH":
             return sev in ("CRITICAL", "HIGH")
+        # LOW (unreachable here — early return above), MEDIUM, and
+        # legacy CRITICAL/HIGH: CRITICAL only.
         return sev == "CRITICAL"
 
     # Always run the second agent + E2B in parallel — they don't depend
@@ -833,7 +907,7 @@ async def verify_patch(
         f for f in llm_review.get("findings", []) or []
         if _blocks(f.get("severity", ""))
     ]
-    llm_blocked = bool(blocking_llm_findings) and block_level != "OFF"
+    llm_blocked = bool(blocking_llm_findings) and level != "OFF"
 
     # 2026-11-25 audit Part IX (d) — reconcile the two pass values.
     # The reviewer's own `pass` was never read here, so `agent.pass`
@@ -895,7 +969,8 @@ async def verify_patch(
         "summary":  " | ".join(summary_parts),
         "regex":    {"blocked": regex_blocked,
                      "count":   len(regex_findings),
-                     "skipped_preexisting": regex_skipped},
+                     "skipped_preexisting": regex_skipped,
+                     "skipped_scope": regex_skipped_scope},
         "agent":    {**llm_review, "skipped_preexisting": llm_skipped},
         "e2b":      e2b_result,
         "mode":     mode,

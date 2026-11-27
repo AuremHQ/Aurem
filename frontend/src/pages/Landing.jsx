@@ -667,7 +667,7 @@ const MODES = [
 const TEAMS = [
   { icon: "🛡️", tag: "UNIQUE — no competitor",
     title: "Security-First by Default",
-    desc: "25-pattern Vanguard scan runs before every commit. Secrets, injection, JWT replay, XSS — all caught before they reach your repo. The only AI engineer with mandatory pre-commit security." },
+    desc: "56-pattern Vanguard scan runs before every commit. Secrets, injection, JWT replay, XSS — all caught before they reach your repo. The only AI engineer with mandatory pre-commit security." },
   { icon: "🔄", tag: "NEW · verified loop",
     title: "Loop Mode — Verified Before Ship",
     desc: "Plan → Execute → Verify → Scan → Ship. ORA shows its plan, waits for your approval, runs ruff/eslint after every file, and only commits when everything passes. Self-heals on errors automatically, up to a 2-retry cap." },
@@ -1155,7 +1155,7 @@ export default function Landing() {
                 <div className="vanguard-shell" aria-hidden="true">
                   <div className="vanguard-line l1">
                     <span className="dot" /><span className="ph">R1</span>
-                    <span className="msg">surface sweep · 412 files · 25 patterns</span>
+                    <span className="msg">surface sweep · 412 files · 56 patterns</span>
                   </div>
                   <div className="vanguard-line l2">
                     <span className="dot" /><span className="ph">R2</span>

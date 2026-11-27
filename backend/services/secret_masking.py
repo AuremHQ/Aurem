@@ -49,9 +49,25 @@ _ENV_GETTER_DEFAULT_RE = re.compile(
 # Well-known vendor key SHAPES need no nearby keyword at all — the
 # shape itself is the tell (same families bug_hunt_rules.py's static
 # rules already recognize in code; this is the free-text equivalent).
+# 2026-11-27 Vanguard 28 — extended to every vendor family the
+# scanner now detects (Anthropic/OpenAI-project/OpenRouter/Groq/xAI/
+# HuggingFace/Telegram/Discord/npm/PyPI/Stripe-webhook/Twilio/Resend/
+# AWS AKIA/Stripe live+test/SendGrid/GitHub OAuth+PAT), so a snippet
+# can never carry a raw vendor key whatever variable it was assigned
+# to (e.g. a bare `KEY = "AKIA..."` line, which the quoted rule above
+# cannot see — `key` alone is not a secret indicator).
 _BARE_SECRET_SHAPE_RE = re.compile(
     r"\b(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{30,}|"
-    r"AIza[A-Za-z0-9_\-]{30,}|xox[baprs]-[A-Za-z0-9-]{10,})\b"
+    r"AIza[A-Za-z0-9_\-]{30,}|xox[baprs]-[A-Za-z0-9-]{10,}|"
+    r"AKIA[0-9A-Z]{16}|sk_(?:live|test)_[A-Za-z0-9]{20,}|"
+    r"sk-ant-api03-[A-Za-z0-9_\-]{20,}|sk-proj-[A-Za-z0-9]{20,}|"
+    r"sk-or-v1-[A-Za-z0-9]{20,}|gsk_[A-Za-z0-9]{20,}|"
+    r"xai-[A-Za-z0-9]{20,}|hf_[A-Za-z0-9]{20,}|re_[A-Za-z0-9]{20,}|"
+    r"npm_[A-Za-z0-9]{36}|pypi-[A-Za-z0-9_\-]{20,}|"
+    r"whsec_[A-Za-z0-9]{20,}|SK[0-9a-f]{32}|"
+    r"SG\.[\w\-]{22}\.[\w\-]{43}|gh[opusr]_[A-Za-z0-9]{30,}|"
+    r"github_pat_[A-Za-z0-9_]{20,}|\d{8,10}:[A-Za-z0-9_\-]{35}|"
+    r"[A-Za-z0-9]{24}\.[A-Za-z0-9_\-]{6}\.[A-Za-z0-9_\-]{27})\b"
 )
 
 

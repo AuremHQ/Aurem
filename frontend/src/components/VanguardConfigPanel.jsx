@@ -3,12 +3,13 @@
  * Vanguard verify thresholds. Mounted at the top of /admin/vanguard
  * alongside the existing audit dashboard.
  *
- *   🔴 OFF       — verify-agent skipped (regex floor still gates)
- *   🟢 CRITICAL  — recommended default; blocks only on critical
- *   🟡 HIGH      — strict; blocks on critical + high
+ *   🔴 OFF     — truly off: no scan, no block (audit log only)
+ *   🟢 LOW     — vendor-shaped secrets only (real credential shapes)
+ *   🟡 MEDIUM  — recommended default; full scan, blocks on critical
+ *   🟠 HIGH    — strictest; full scan + chains, blocks critical + high
  *
- * A master "Enabled" toggle wraps the whole agent — when OFF the LLM
- * + E2B passes are skipped entirely (regex floor remains).
+ * A master "Enabled" toggle wraps the whole agent — when OFF the
+ * verify pipeline is skipped entirely.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
@@ -16,13 +17,16 @@ import { UnsavedChangesDialog } from "./ui-states/UiStates.jsx";
 import { toast } from "./Toast";
 
 const MODES = ["swift", "pro", "maxx"];
+const DEFAULT_LEVELS = { swift: "MEDIUM", pro: "HIGH", maxx: "HIGH" };
 const LEVELS = [
-  { value: "OFF",      dot: "#ef4444",
-    blurb: "Disabled — only regex floor blocks." },
-  { value: "CRITICAL", dot: "#22c55e",
-    blurb: "Recommended. Blocks only on critical findings." },
-  { value: "HIGH",     dot: "#f59e0b",
-    blurb: "Strict. Blocks on critical + high." },
+  { value: "OFF",    dot: "#ef4444",
+    blurb: "Disabled — no scan, no block. Audit log only." },
+  { value: "LOW",    dot: "#22c55e",
+    blurb: "Vendor secrets only — blocks on real credential shapes." },
+  { value: "MEDIUM", dot: "#f59e0b",
+    blurb: "Recommended. Full scan, blocks on critical findings." },
+  { value: "HIGH",   dot: "#ff6b6b",
+    blurb: "Strictest. Full scan + chains, blocks critical + high." },
 ];
 
 export default function VanguardConfigPanel() {
@@ -95,6 +99,14 @@ export default function VanguardConfigPanel() {
           <div style={subStyle}>
             Per-mode severity threshold for the LLM verify-agent. Changes
             propagate within ~10 s.
+            {cfg?.pattern_counts && (
+              <>
+                {" "}Catalog: {cfg.pattern_counts.total_r1} R1 patterns
+                {" "}({cfg.pattern_counts.secrets} secrets +{" "}
+                {cfg.pattern_counts.dangerous} dangerous) ·{" "}
+                {cfg.pattern_counts.deep} deep · {cfg.pattern_counts.chains} chains.
+              </>
+            )}
           </div>
         </div>
         <button
@@ -118,7 +130,7 @@ export default function VanguardConfigPanel() {
                     gap: 12 }}>
         {MODES.map((mode) => (
           <ModeSelector key={mode} mode={mode}
-                        current={draft.levels?.[mode] || "CRITICAL"}
+                        current={draft.levels?.[mode] || DEFAULT_LEVELS[mode]}
                         disabled={!draft.enabled}
                         onChange={(lvl) => setLevel(mode, lvl)} />
         ))}

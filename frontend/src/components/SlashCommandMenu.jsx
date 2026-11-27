@@ -36,7 +36,7 @@ export const SLASH_COMMANDS = [
     id:          "security-scan",
     trigger:     "/security-scan",
     label:       "Security only",
-    description: "Vanguard 25-pattern regex catalog",
+    description: "Vanguard 56-pattern regex catalog",
     icon:        ShieldCheck,
     categories:  ["security"],
   },

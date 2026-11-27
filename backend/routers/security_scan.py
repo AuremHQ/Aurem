@@ -41,11 +41,12 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, HTTPException, Header
 
-from cto_services.auth import current_dev, require_admin
+from cto_services.auth import current_dev
 from cto_services.db import get_db
 from services.team_permissions import check_permission
 # Iter 212m-66 — two-round deep scanner.
-from services.vanguard_scanner import run_two_round_scan
+from services.vanguard_scanner import run_two_round_scan, pattern_counts
+from services.vanguard_scanner import _SECRET_PATTERN_DEFS as _VG_SECRET_DEFS
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/security-scan", tags=["Security Scan"])
@@ -110,11 +111,15 @@ async def run_security_scan(
     Returns: {"ok": True, "summary": {…counts…}, "findings": [...]}.
     No auto-apply — caller renders + asks the user to fix manually.
 
-    Iter 212m-158 — Admin/founder gate.  Non-admin callers get a
-    clean 403 here instead of leaking the scan UX through.  Matches
-    the frontend route guards shipped in iter 212m-157.
+    Iter 212m-158 — Admin/founder gate (REVISED 2026-11-27 Vanguard 28):
+    the endpoint now uses `current_dev` (any signed-in paying user)
+    instead of `require_admin`. The project lookup below already
+    scopes to the caller's own `user_id`, so a user can only scan
+    their own connected repos — that ownership filter is the real
+    authorization; the admin gate was defense-in-depth that locked
+    paying users out of a scan they pay for.
     """
-    user = await require_admin(authorization)
+    user = await current_dev(authorization)
     user_id = user["user_id"]
     project_id = (body or {}).get("project_id")
     from services.loop_token_ledger import tag_request_surface
@@ -231,7 +236,20 @@ async def run_security_scan(
     two_round_block: Optional[dict] = None
     if two_round and text_cache:
         try:
-            tr_result = run_two_round_scan(text_cache)
+            # 2026-11-27 — resolve the active level for the requested
+            # mode (default swift) so R2/chains respect OFF/LOW/MEDIUM.
+            # A manual scan is never suppressed by OFF — only the
+            # automatic commit gate is; OFF here just skips R2/chains.
+            _scan_mode = (body or {}).get("mode") or "swift"
+            _scan_level = "HIGH"
+            try:
+                from services.vanguard_config import get_mode_settings
+                _enabled, _scan_level = await get_mode_settings(_scan_mode)
+            except Exception:
+                _scan_level = "HIGH"
+            tr_result = run_two_round_scan(
+                text_cache, block_level=_scan_level,
+            )
             tr_combined = _normalize_findings(tr_result.get("combined") or [])
             existing_keys = {
                 (f.get("file") or "", int(f.get("line") or 0),
@@ -322,6 +340,9 @@ async def run_security_scan(
         "fixed_findings":  fixed_findings[:200],
         "fixed_count":     len(fixed_findings),
         "truncated":       len(findings) > 500,
+        # 2026-11-27 — live catalog counts (single source of truth);
+        # the UI badge reads this instead of a hard-coded number.
+        "pattern_counts":  pattern_counts(),
     }
     if two_round_block is not None:
         response["two_round"] = two_round_block
@@ -368,23 +389,10 @@ async def run_security_scan(
 # sql_*  → sql_injection, nosql_* → nosql_injection,
 # redos_* → redos, lpdos_* → lpdos, ssti_* → ssti,
 # chain_* → chain, eval/exec/yaml/os → dangerous_code
-_SECRET_RULE_IDS = frozenset({
-    "generic_api_key",
-    "aws_access_key",
-    "aws_secret_key",
-    "password_assignment",
-    "token_assignment",
-    "private_key",
-    "github_token",
-    "slack_token",
-    "generic_secret",
-    "db_connection_string",
-    "stripe_live_key",
-    "stripe_test_key",
-    "google_api_key",
-    "sendgrid_key",
-    "openai_key",
-})
+# 2026-11-27 Vanguard 28 — derived from the vanguard catalog (single
+# source of truth) so new secret rules are classified as secret_leak
+# without a second list to keep in sync.
+_SECRET_RULE_IDS = frozenset({n for n, _p, _s in _VG_SECRET_DEFS})
 _RULE_PREFIX_TO_VULN = {
     "secret_": "secret_leak",
     "sql_": "sql_injection",
@@ -396,6 +404,13 @@ _RULE_PREFIX_TO_VULN = {
     "clipboard": "clipboard",
     "replay": "replay",
     "python_syntax_error": "syntax_error",
+    # 2026-11-27 — new dangerous rules (exact-prefix classes).
+    "ssrf_": "ssrf", "xxe_": "xxe", "unsafe_redirect": "open_redirect",
+    "cors_": "cors", "debug_": "misconfiguration", "jwt_": "jwt",
+    "crypto_": "weak_crypto", "django_": "sql_injection",
+    "command_": "command_injection", "child_": "command_injection",
+    "graphql_": "dos", "express_": "dos", "path_": "path_traversal",
+    "cloud_": "ssrf",
 }
 
 

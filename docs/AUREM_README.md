@@ -118,7 +118,7 @@ tool-call emissions are absorbed by a lenient extractor in
 ## Feature Log — What Actually Ships Today <a id="feature-log"></a>
 
 ### 🛡️ Vanguard Security Scanner
-- 25-pattern pre-commit security scan on every commit
+- 56-pattern pre-commit security scan on every commit
 - Detects: secrets, SQL/NoSQL injection, JWT replay, XSS, CSRF, path
   traversal, IDOR, missing auth, SSTI, ReDoS, LPDoS
 - Critical findings block the commit automatically

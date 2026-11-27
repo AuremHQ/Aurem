@@ -568,6 +568,15 @@ export default function SecurityScanDrawer({ open, onClose, projectId, projectLa
                       color: "#7dd3fc", fontSize: 10,
                     }}>DEEP</span>
                   )}
+                  {data.pattern_counts && (
+                    <span style={{ marginLeft: 8 }}>
+                      catalog: {data.pattern_counts.total_r1} R1
+                      {" "}({data.pattern_counts.secrets} secrets +{" "}
+                      {data.pattern_counts.dangerous} dangerous) ·{" "}
+                      {data.pattern_counts.deep} deep ·{" "}
+                      {data.pattern_counts.chains} chains
+                    </span>
+                  )}
                 </span>
                 {cachedAt && (
                   <span title="Cached result">

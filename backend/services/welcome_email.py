@@ -89,7 +89,7 @@ def render_text(user: dict) -> str:
         "ship code to your GitHub repo.\n"
         "\n"
         "Why teams trust ORA with a repo on day one:\n"
-        "  - Vanguard scan runs on every commit — 25 security patterns\n"
+        "  - Vanguard scan runs on every commit — 56 security patterns\n"
         "    (secrets, injection, XSS, JWT replay) blocked before push.\n"
         "  - Citation Guard flags any code ORA writes without a source\n"
         "    reference — no invented APIs, no hallucinated file paths.\n"
@@ -166,7 +166,7 @@ font-family:'Helvetica Neue',Arial,sans-serif;line-height:1.6;">
           </div>
           <ul style="padding-left:20px;margin:0;color:#d8d8d8;">
             <li style="margin-bottom:8px;">
-              <b>Vanguard scan</b> runs on every commit — 25 security
+              <b>Vanguard scan</b> runs on every commit — 56 security
               patterns (secrets, injection, XSS, JWT replay) blocked
               before push.
             </li>

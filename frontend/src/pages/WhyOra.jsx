@@ -169,7 +169,7 @@ const TIERS = [
         n: "03",
         icon: "GUARD",
         h: "Vanguard Verify Agent",
-        p: "Anthropic's defending-code-reference-harness pattern. Separate model with different prompt re-reviews every patch for 25 vulnerability patterns before commit.",
+        p: "Anthropic's defending-code-reference-harness pattern. Separate model with different prompt re-reviews every patch for 56 vulnerability patterns before commit.",
         proof: "services/vanguard_verify_agent.py",
       },
       {
