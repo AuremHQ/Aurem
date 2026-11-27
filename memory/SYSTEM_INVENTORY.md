@@ -1102,3 +1102,12 @@ History claimed these shipped ~Iter 114-115. Live-codebase evidence
 ### Iter 0 · 2026-11-20
 
 | `routers/api_catalog.py` | `(none)` | 0 | auto-detected new router (verify) (Iter 0, 2026-11-20T00:29:35.579943Z) | <!-- inv:router:routers/api_catalog.py -->
+
+### Iter 0 · 2026-11-25
+
+- `services/http_client.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-25T14:45:08.298438Z] <!-- inv:service:services/http_client.py -->
+- `services/wallet_reconciliation.py` — auto-detected new service (verify) · status=wired [Iter 0, 2026-11-25T14:45:08.298489Z] <!-- inv:service:services/wallet_reconciliation.py -->
+
+### Iter 0 · 2026-11-26
+
+- `ORA_QUOTA_FAIL_OPEN` — auto-detected in backend/routers/chat_pre_llm.py (verify) (default: unset) [Iter 0, 2026-11-26T17:29:54.114746Z] <!-- inv:envvar:ORA_QUOTA_FAIL_OPEN -->
