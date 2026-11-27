@@ -53,7 +53,28 @@ def test_g15_docstring_no_longer_lies():
     assert "pip-audit" in top_docstring
     assert "yarn" in top_docstring
     assert "yarn.lock" in top_docstring, \
-        "docstring must mention what yarn scans"
+        "        "docstring must mention what yarn scans"
+
+
+# 2b) pip severity is UNKNOWN, not silently dropped (2026-11-26)
+def test_g15_pip_severity_unknown_is_surfaced_not_silent():
+    """pip-audit JSON has no severity field — the scanner must record
+    pip findings as UNKNOWN, warn about them, and persist the count,
+    instead of silently letting them never gate (the old bug: severity
+    "" never matched HIGH/CRITICAL, so pip findings were invisible to
+    the gate). Gating on presence would fail the build on ~183
+    unclassified vulns (fake red) and break
+    test_g15_scanner_now_reports_clean — so UNKNOWN is surfaced +
+    persisted, not gated. Source-level test (same idiom as the
+    wiring/docstring tests above); a live re-run of the scanner is
+    still owed to confirm the counts."""
+    src = SCRIPT.read_text()
+    assert '"UNKNOWN"' in src, \
+        "pip findings must be marked UNKNOWN severity"
+    assert "unknown_severity" in src, \
+        "unknown-severity count must be persisted"
+    assert "WARN" in src and "pip-audit emits none" in src, \
+        "must warn that pip-audit emits no severity""
 
 
 # ═════════════════════════════════════════════════════════════════

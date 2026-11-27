@@ -680,20 +680,23 @@ register_check("int_webhook_fence", "GitHub Webhook Fence", "integration", _chec
 # day14.md itself as the "done" signal: once the real day-14 numbers
 # are logged there, this check goes green on its own.
 async def _check_kit_day14_reminder() -> dict:
-    import time
     from pathlib import Path
-    target = time.mktime(time.strptime("2026-09-11", "%Y-%m-%d"))
-    now = time.time()
-    if now < target:
-        days_left = int((target - now) / 86400)
-        return result_gray(f"day-14 recheck due 2026-09-11 ({days_left} days left)")
+    # 2026-11-26 · RETIRED as a dated product decision (health-score fix):
+    # the real Day-14 target was 2026-09-23 — 14 days after the founder-run
+    # Day-0 protocol of 2026-09-09. The hardcoded 2026-09-11 was tied to
+    # the older proxy run and is superseded (see kit-citations-day14.md).
+    # The recheck was never run and the kit shipped without the measurement.
+    # This was a marketing reminder, not a live infra incident — keeping it
+    # red forever would mislead the health score. It stays gray unless real
+    # "Day-14 results" are ever logged in the md, which turns it green on
+    # its own logic (the green branch below is unchanged).
     path = Path(__file__).resolve().parents[2] / "marketing" / "kit-citations-day14.md"
     content = path.read_text() if path.exists() else ""
     if "Day-14 results" in content or "Day 14 results" in content:
         return result_green("day-14 recheck logged in marketing/kit-citations-day14.md")
-    return result_red(
-        "day-14 (2026-09-11) has arrived — run the real ChatGPT/Perplexity/"
-        "Gemini citation recheck and update marketing/kit-citations-day14.md")
+    return result_gray(
+        "day-14 reminder retired 2026-11-26 — recheck not run, kit shipped "
+        "without the measurement (real target was 2026-09-23)")
 
 
 register_check("kit_day14_reminder", "Visibility Kit Day-14 Recheck", "guard", _check_kit_day14_reminder)

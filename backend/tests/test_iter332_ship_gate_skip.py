@@ -122,8 +122,16 @@ class TestRouterWiring:
         seg = seg.split("async def ")[0]
         assert "skip_at_ship" in seg
         assert 'engine.phase == "ship"' in seg
-        # skip@ship branch must come BEFORE the generic retry/skip resume
-        assert seg.index("skip_at_ship") < seg.index('("retry", "skip")')
+        # skip@ship branch must come BEFORE the generic retry/skip resume.
+        # NOTE (2026-11-26): the function ALSO has earlier terminal-state
+        # guards that legitimately mention ("retry", "skip") — the
+        # engine-None 404/409 guard and the live-engine terminal guard.
+        # Those are guards, not the resume branch, so the ordering that
+        # matters is against the `elif` resume branch below. The old
+        # assertion matched the first ("retry", "skip") anywhere (a guard)
+        # and failed even though skip@ship was already routed first.
+        resume_idx = seg.index('elif body.action in ("retry", "skip"):')
+        assert seg.index("skip_at_ship") < resume_idx
 
     def test_approve_ship_endpoint_exists(self):
         assert '@router.post("/{loop_id}/approve-ship")' in ROUTER_SRC

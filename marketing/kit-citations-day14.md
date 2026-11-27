@@ -134,3 +134,13 @@ Day-0 baseline** — this section stays only for historical record.
   start date and is now superseded by 2026-09-23.
 - ~~Day 14 (2026-09-11)~~ — superseded, see above.
 
+## Day-14 recheck — RETIRED 2026-11-26
+
+**Status: retired, not run.** The real Day-14 target (2026-09-23, 14 days
+after the founder-run Day-0 protocol of 2026-09-09) passed without the
+recheck being run, and the kit shipped without the day-14 measurement.
+This was a marketing reminder, not a live incident — the health check
+now reports gray for it instead of red. If the recheck is ever run,
+log the numbers under a "Day-14" heading and the check goes green on
+its own logic. Until then, do not quote day-14 numbers — there are none.
+

@@ -324,6 +324,23 @@ async def test_g17_red_when_one_or_more_open(monkeypatch):
 
 
 # ─────────────────────────────────────────────────────────────
+# kit_day14_reminder — retired 2026-11-26 (health-score fix)
+# ─────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_kit_day14_gray_when_retired():
+    """The day-14 recheck was never run and the kit shipped without the
+    measurement — the reminder was retired as a dated product decision
+    (2026-11-26), so the check reports GRAY, not red. It goes green on
+    its own logic if real "Day-14 results" are ever logged in the md.
+    NOTE: this reads the real marketing/kit-citations-day14.md — the md
+    must not contain the trigger strings "Day-14 results" / "Day 14
+    results" except as a real logged recheck."""
+    res = await health_checks._check_kit_day14_reminder()
+    _shape_ok(res, "gray")
+    assert "retired" in res["detail"].lower()
+
+
+# ─────────────────────────────────────────────────────────────
 # Registry integrity — all four proof-of-pattern adapters are
 # registered under their expected ids and category.
 # ─────────────────────────────────────────────────────────────

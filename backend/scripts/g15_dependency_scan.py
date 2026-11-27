@@ -11,6 +11,14 @@ Exit codes:
       an allowlist entry has passed its expiry date.
   2 — scan itself failed to run (pip-audit missing, network err).
 
+pip-audit 2.10.1 JSON carries NO severity field (verified keys: aliases,
+description, fix_versions, id) — pip findings are recorded with severity
+UNKNOWN, surfaced + persisted, but do NOT gate the build. Gating on
+presence would fail the build on every unclassified vuln (fake red) and
+break test_g15_scanner_now_reports_clean. The HIGH/CRITICAL gate enforces
+findings that carry a severity (yarn) plus allowlist expiry. A
+severity-aware pip gate needs OSV enrichment — follow-up, not this script.
+
 Allowlist file: `scripts/g15_allowlist.json`.
 Format: [{"id": "CVE-...", "package": "...", "reason": "...",
           "expires": "2026-12-31"}]
@@ -66,10 +74,16 @@ def _run_pip_audit() -> tuple[int, list[dict]]:
     findings = []
     for dep in parsed.get("dependencies") or []:
         for v in dep.get("vulns") or []:
+            # 2026-11-26 · pip-audit JSON has NO severity field (verified
+            # keys: aliases, description, fix_versions, id) — the old
+            # `(v.get("severity") or "").upper()` was always "", so pip
+            # findings NEVER matched the HIGH/CRITICAL gate and were
+            # silently unenforced. Record UNKNOWN explicitly; main()
+            # surfaces + persists them instead of gating on them.
             findings.append({
                 "package":  dep.get("name"),
                 "id":       v.get("id"),
-                "severity": (v.get("severity") or "").upper(),
+                "severity": "UNKNOWN",
                 "fix":      v.get("fix_versions"),
                 "aliases":  v.get("aliases"),
             })
@@ -197,6 +211,8 @@ def _persist_result(findings: list[dict], hard_fails: list[dict]) -> None:
         "kind":           "g15_dep_scan",
         "total_findings": len(findings),
         "high_critical":  len(hard_fails),
+        "unknown_severity": len([f for f in findings
+                                if (f.get("severity") or "") in ("", "UNKNOWN")]),
         "findings":       findings[:100],
     }
     try:
@@ -229,6 +245,15 @@ def main() -> int:
         return 2
 
     findings = py_findings + js_findings
+    # 2026-11-26 · pip findings carry UNKNOWN severity (pip-audit emits
+    # none) — they do NOT gate the build, but they must not be silent
+    # either. Surface the count here and persist it in _persist_result.
+    unknown_sev = [f for f in findings
+                   if (f.get("severity") or "") in ("", "UNKNOWN")]
+    if unknown_sev:
+        print(f"[g15] WARN {len(unknown_sev)} finding(s) have UNKNOWN "
+              f"severity (pip-audit emits none) — reported + persisted, "
+              f"not gated. Triage via the allowlist.")
     hard_fails = []
     for f in findings:
         if not _severity_gates_ci(f["severity"]):
@@ -251,6 +276,7 @@ def main() -> int:
         return 1
     print(f"[g15] OK — 0 HIGH/CRITICAL findings unhandled "
           f"(pip={len(py_findings)}, yarn={len(js_findings)}; "
+          f"{len(unknown_sev)} unknown-severity; "
           f"{len(allowlist)} allowlist entries).")
     return 0
 
