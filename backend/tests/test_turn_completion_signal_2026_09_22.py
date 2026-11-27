@@ -53,7 +53,7 @@ def test_intent_lead_but_real_delivery_is_untouched():
     delivered = (
         "Let me lay out the three flags:\n"
         "1. SEMANTIC_MODE_ROUTER_ENABLED — off\n"
-        "2. LLM_PROMPT_CACHING_ENABLED — off\n"
+        "2. LLM_PROMPT_CACHING_ENABLED — on\n"
         "3. input normalizer — wired on ChatBody"
     )
     assert enforce_turn_completion_signal(delivered) == delivered

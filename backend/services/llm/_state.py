@@ -25,6 +25,7 @@ so external attribute access (`llm._last_provider_ctx`,
 """
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Optional
@@ -126,8 +127,10 @@ _LONGCAT_LAST_PROBE: dict = {
 # personas, an orchestrator follow-up tool-loop iteration) wraps the
 # call in `prompt_cache_context(...)`; every other caller sees the
 # inert default below and gets ZERO behavior change — the transport
-# layer additionally requires `LLM_PROMPT_CACHING_ENABLED=1` before it
-# acts on this at all (see openrouter_client.py / openrouter_providers.py).
+# layer additionally requires prompt caching to be on (default ON
+# since 2026-11-27; `LLM_PROMPT_CACHING_ENABLED=0` switches it off)
+# before it acts on this at all (see openrouter_client.py /
+# openrouter_providers.py).
 #
 # `cache_system=True` is a HINT, not a guarantee of correctness — the
 # transport layer still gates the actual `cache_control` marker to
@@ -142,6 +145,16 @@ _prompt_cache_ctx: ContextVar[dict] = ContextVar(
 
 def get_prompt_cache_context() -> dict:
     return dict(_prompt_cache_ctx.get())
+
+
+def prompt_caching_enabled() -> bool:
+    """Is prompt caching switched on? Default ON (2026-11-27) — the
+    flag defaulted OFF since 2026-09-22, so every call skipped the
+    prompt-cache path even when a caller wrapped it in
+    `prompt_cache_context`. Set `LLM_PROMPT_CACHING_ENABLED=0` for the
+    one kill-switch; per-call `cache_system` still decides whether a
+    given call stamps a cache-control marker."""
+    return os.getenv("LLM_PROMPT_CACHING_ENABLED", "1") != "0"
 
 
 @asynccontextmanager

@@ -472,6 +472,74 @@ async def council_health(authorization: Optional[str] = Header(None)):
     }
 
 
+def aggregate_prompt_cache_stats(rows: list) -> dict:
+    """Summarise prompt-cache hits from already-fetched
+    `real_llm_usage` rows (one window). Pure function so the maths is
+    unit-testable without Mongo. Only rows the provider reported
+    cached tokens for count as hits — a 0 means "not reported", not
+    "proven uncached"."""
+    calls = 0
+    prompt_tokens = 0
+    cached_tokens = 0
+    calls_with_hit = 0
+    by_model: dict = {}
+    for row in rows:
+        if (row.get("status") or "ok") != "ok":
+            continue
+        calls += 1
+        pt = int(row.get("prompt_tokens") or row.get("input_tokens") or 0)
+        ct = int(row.get("cached_tokens") or 0)
+        prompt_tokens += pt
+        cached_tokens += ct
+        if ct > 0:
+            calls_with_hit += 1
+        m = by_model.setdefault(row.get("model") or "unknown",
+                                {"calls": 0, "prompt_tokens": 0, "cached_tokens": 0})
+        m["calls"] += 1
+        m["prompt_tokens"] += pt
+        m["cached_tokens"] += ct
+    share = (cached_tokens / prompt_tokens) if prompt_tokens else 0.0
+    return {
+        "calls": calls,
+        "prompt_tokens": prompt_tokens,
+        "cached_tokens": cached_tokens,
+        "cache_hit_share": round(share, 4),
+        "calls_with_cached_tokens": calls_with_hit,
+        "by_model": by_model,
+    }
+
+
+@router.get("/llm/prompt-cache")
+async def llm_prompt_cache_stats(authorization: Optional[str] = Header(None)):
+    """How much prompt caching is actually saving, from the ledger.
+
+    Aggregates `real_llm_usage` over the last 24h and 7d. A row only
+    counts as a cache hit when the provider reported cached tokens
+    for it — so a 0 here means "no provider reported a hit", not
+    "caching is broken". The flag state is reported alongside so the
+    dashboard can tell "off" apart from "on but no hits yet".
+    """
+    await _require_admin(authorization)
+    from services.llm._state import prompt_caching_enabled
+    db = require_db()
+    now = time.time()
+    rows = await db.real_llm_usage.find(
+        {"ts": {"$gte": now - 7 * 86400}, "status": "ok"},
+        {"_id": 0, "ts": 1, "model": 1, "prompt_tokens": 1,
+         "input_tokens": 1, "cached_tokens": 1, "status": 1},
+    ).sort("ts", -1).limit(20000).to_list(20000)
+    last_24h = [r for r in rows if (r.get("ts") or 0) >= now - 86400]
+    return {
+        "flag_enabled": prompt_caching_enabled(),
+        "note": ("Only provider-reported cached tokens count. 0 cached "
+                 "tokens means no provider reported a hit in the window, "
+                 "not proof caching is off."),
+        "last_24h": aggregate_prompt_cache_stats(last_24h),
+        "last_7d": aggregate_prompt_cache_stats(rows),
+        "checked_at": now,
+    }
+
+
 @router.post("/council/reprobe")
 async def council_reprobe(authorization: Optional[str] = Header(None)):
     """Force an immediate LongCat re-probe. Founder-only.

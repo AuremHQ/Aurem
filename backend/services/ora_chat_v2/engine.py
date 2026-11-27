@@ -221,9 +221,18 @@ async def run_turn(db, *, admin_id: str, session: dict, user_message: str,
     "anonymous"/`surface=unknown` — root cause of ORA calls showing
     app "Unknown" / no Client User ID on the OpenRouter dashboard.
     Full implementation: `_run_turn_impl`."""
+    from services.llm._state import prompt_cache_context
     from services.loop_token_ledger import llm_user_context, llm_surface_context
     async with llm_user_context(admin_id), llm_surface_context(
         surface="founder_chat", session_id=session.get("session_id") or None,
+    ), prompt_cache_context(
+        # cache_system=False on purpose: this turn's system prompt ends
+        # in a date/time line that changes every minute, so an Anthropic
+        # cache_control marker would pay a cache-write charge every turn
+        # for ~zero hits. The win here is the static prefix (ordered
+        # first below) for DeepSeek/GLM automatic prefix caching, plus
+        # the sticky session_id for replica routing.
+        session_id=session.get("session_id") or None, cache_system=False,
     ):
         async for evt in _run_turn_impl(
             db, admin_id=admin_id, session=session, user_message=user_message,
@@ -276,13 +285,13 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
     # data-freshness stamp, NOT the clock — it is now rendered in the
     # user's zone (D3 residual fix above) so the stamp itself is not
     # misread as a UTC time.
-    system_parts = [_today_line(user_tz)]
-    try:
-        from services.ora_chat.safety import build_runtime_context
-        system_parts.append(build_runtime_context(user_tz))
-    except Exception:                                        # noqa: BLE001
-        pass
-    system_parts.append(SYSTEM_PROMPT)
+    # 2026-11-27 — static content FIRST, changing content LAST. The
+    # date/time lines below change every turn, so anything placed after
+    # them can never match a cached prefix; ordering the stable prompt
+    # first is what lets DeepSeek/GLM automatic prefix caching hit.
+    # The date and runtime context are still in the prompt (the model
+    # still gets the current time) — they just sit at the end now.
+    system_parts = [SYSTEM_PROMPT]
     if house_rules_text:
         system_parts.append(house_rules_text)
     system_parts.append(state_block)
@@ -295,6 +304,12 @@ async def _run_turn_impl(db, *, admin_id: str, session: dict, user_message: str,
             "session is advise-only. [/ACTION CATALOG]")
     if page_inspection:
         system_parts.append(_render_page_inspection(page_inspection))
+    system_parts.append(_today_line(user_tz))
+    try:
+        from services.ora_chat.safety import build_runtime_context
+        system_parts.append(build_runtime_context(user_tz))
+    except Exception:                                        # noqa: BLE001
+        pass
 
     messages = [{"role": "system", "content": "\n\n".join(system_parts)}]
     messages.extend(await _v2_history(session, user_message))
