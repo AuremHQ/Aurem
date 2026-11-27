@@ -83,6 +83,13 @@ jobs:
     #   • "Backend — pytest"
     #   • "Delete Gate — dependency-check enforcement"
     #   • "Copy — Absolute-claim lint"
+    # "Backend — pytest" success means "no new regression vs the
+    # August 25 baseline" (failed<=321 errors<=62, enforced by the
+    # Guard — Regression baseline lock step in ci.yml), NOT
+    # "6400/6400 green" — the full suite carries pre-existing red
+    # and will not be 100% green this week. The baseline lock is the
+    # job's exit gate; a pytest crash (no summary line) still fails
+    # it, so a skipped/crashed run can never look green.
     # MUST failure (or a skipped MUST job — fail-closed) blocks the
     # deploy. Everything else is advisory and only logged:
     # simulated-user QA skipped (no LLM key) → allow; G15 dependency
