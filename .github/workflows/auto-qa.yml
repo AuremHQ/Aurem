@@ -117,6 +117,12 @@ jobs:
         # (its own comment: "GITHUB_TOKEN-authored pushes don't
         # re-trigger push-based workflows" — safe to push here, no
         # infinite-CI-loop risk).
+        # Nov 2026 (CI-unblock) — continue-on-error: GITHUB_TOKEN
+        # cannot push to main (protected branch), so this step 403s on
+        # every main push. The report still reaches the run as an
+        # artifact (previous step); a failed commit-back must not red
+        # the whole Auto-QA workflow.
+        continue-on-error: true
         if: always() && github.event_name == 'push'
         run: |
           if [ ! -f .emergent/latest-qa-report.md ]; then

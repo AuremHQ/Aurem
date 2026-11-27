@@ -54,9 +54,49 @@ FRONTEND = BACKEND.parent / "frontend"
 
 # ─── Import stubs (cto_services only; everything else is real) ─────
 
+def _delegating_fake(name, **attrs):
+    """Build a fake module that returns `attrs` for the names it
+    defines and delegates any OTHER attribute to the REAL module.
+    The old bare fake broke `from <name> import <other>` for every
+    other test file collected after this one (e.g. part15's fake
+    cto_services.auth lacked require_context_bridge_token, which
+    test_p1j_context_bridge.py needs; its fake cto_services.db
+    lacked set_db, which test_stripe_invoice_payment_failed.py
+    needs). Defined attributes win, so this file's own tests still
+    see the fake admin user / stub db; anything else falls through
+    to the real module. The real module is loaded once, lazily, by
+    temporarily unmasking the fake in sys.modules.
+    """
+    import importlib
+
+    fake = types.ModuleType(name)
+    for _k, _v in attrs.items():
+        setattr(fake, _k, _v)
+    _real = [None]
+
+    def __getattr__(attr):
+        if _real[0] is None:
+            saved = sys.modules.pop(name, None)
+            try:
+                _real[0] = importlib.import_module(name)
+            finally:
+                if saved is not None:
+                    sys.modules[name] = saved
+        return getattr(_real[0], attr)
+
+    fake.__getattr__ = __getattr__
+    return fake
+
+
 def _install_stubs() -> None:
-    if "cto_services.auth" in sys.modules and "cto_services.db" in sys.modules:
-        return
+    # Always install the delegating fakes (replacing the real modules
+    # if already loaded). The old guard (`if auth and db in
+    # sys.modules: return`) skipped the install whenever the real
+    # modules were already imported, so this file's tests hit the
+    # REAL auth (401 Invalid token) instead of the fake admin user.
+    # The delegating fake defines the fake behaviours this file's
+    # tests need and falls through to the real module for anything
+    # else, so other files' imports still work.
     sys.path.insert(0, str(BACKEND))
 
     async def _admin_user(_authorization=None, request=None):
@@ -68,25 +108,40 @@ def _install_stubs() -> None:
     async def _finish_admin_check(user, request=None):
         return user
 
+    # In-memory get/set pair (mirrors the real cto_services.db):
+    # get_db returns whatever set_db stored (None initially), so
+    # other tests that use set_db/get_db as a pair keep working.
+    _db_store = {"db": None}
+
     def _get_db():
-        return None
+        return _db_store["db"]
+
+    def _set_db(database):
+        _db_store["db"] = database
 
     def _require_db():
         raise RuntimeError("require_db stub — tests must patch it")
 
     cto = types.ModuleType("cto_services")
-    cto.__path__ = []
+    # Real __path__ (not []) so submodule imports resolve to the
+    # real files even when this fake package wins.
+    cto.__path__ = [str(BACKEND / "cto_services")]
     sys.modules.setdefault("cto_services", cto)
-    auth = types.ModuleType("cto_services.auth")
-    auth.current_dev = _admin_user
-    auth.require_admin_dep = _require_admin_dep
-    auth.require_admin = _admin_user
-    auth._finish_admin_check = _finish_admin_check
-    sys.modules.setdefault("cto_services.auth", auth)
-    db = types.ModuleType("cto_services.db")
-    db.get_db = _get_db
-    db.require_db = _require_db
-    sys.modules.setdefault("cto_services.db", db)
+    auth = _delegating_fake(
+        "cto_services.auth",
+        current_dev=_admin_user,
+        require_admin_dep=_require_admin_dep,
+        require_admin=_admin_user,
+        _finish_admin_check=_finish_admin_check,
+    )
+    sys.modules["cto_services.auth"] = auth
+    db = _delegating_fake(
+        "cto_services.db",
+        get_db=_get_db,
+        set_db=_set_db,
+        require_db=_require_db,
+    )
+    sys.modules["cto_services.db"] = db
 
     services = types.ModuleType("services")
     services.__path__ = [str(BACKEND / "services")]

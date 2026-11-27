@@ -25,6 +25,28 @@ def _mod(name, **attrs):
     m = types.ModuleType(name)
     for k, v in attrs.items():
         setattr(m, k, v)
+    # Delegate any other attribute to the REAL module so `from <name>
+    # import <other>` keeps working for every other test file
+    # collected after this one (same fix as tests/p1e_stubs.py).
+    # The old bare fake broke `from cto_services.db import
+    # set_db/require_db`, `from services.github_api_writer import
+    # fetch_file`, and `from services.vanguard_scanner import
+    # DANGEROUS_PATTERNS` for later files. Defined attributes win,
+    # so this file's own tests still see the fakes.
+    _real = [None]
+
+    def __getattr__(attr, _name=name, _real=_real):
+        if _real[0] is None:
+            import importlib
+            saved = sys.modules.pop(_name, None)
+            try:
+                _real[0] = importlib.import_module(_name)
+            finally:
+                if saved is not None:
+                    sys.modules[_name] = saved
+        return getattr(_real[0], attr)
+
+    m.__getattr__ = __getattr__
     sys.modules[name] = m
     return m
 
@@ -38,8 +60,12 @@ def _pkg(name, path=None):
 
 # --- stub packages / sibling imports BEFORE loading local_tools --------
 _pkg("services", SERVICES)
-_pkg("cto_services")
-_pkg("core")
+# Real __path__ (not []) so submodule imports resolve to the real
+# files AND the _mod __getattr__ delegation below can load the real
+# submodule. An empty __path__ made `importlib.import_module` fail
+# with ModuleNotFoundError when a fake submodule delegated to real.
+_pkg("cto_services", BACKEND / "cto_services")
+_pkg("core", BACKEND / "core")
 _mod("cto_services.db", get_db=lambda: None)
 
 
