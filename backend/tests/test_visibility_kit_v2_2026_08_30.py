@@ -119,19 +119,19 @@ async def test_t_kit_html_entry_path_falls_back_to_nested_index_html():
             return "<html><body>no head tag here</body></html>"
         return None
 
-    with patch("services.seo.visibility_apply.fetch_file", new=AsyncMock(side_effect=fake_fetch)), \
-         patch("services.seo.visibility_apply.find_html_entry_path",
+    with patch("services.seo.kit_engine.fetch_file", new=AsyncMock(side_effect=fake_fetch)), \
+         patch("services.seo.kit_engine.find_html_entry_path",
                new=AsyncMock(return_value="audit-repro/index.html")), \
-         patch("services.seo.visibility_apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
-         patch("services.seo.visibility_apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
-         patch("services.seo.visibility_apply.commit_files", new=AsyncMock(return_value={"ok": True})), \
-         patch("services.seo.visibility_apply.open_or_reuse_pr", new=AsyncMock(return_value={
+         patch("services.seo.kit_engine.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
+         patch("services.seo.kit_engine.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
+         patch("services.seo.kit_engine.commit_files", new=AsyncMock(return_value={"ok": True})), \
+         patch("services.seo.kit_engine.open_or_reuse_pr", new=AsyncMock(return_value={
              "ok": True, "pr_url": "https://github.com/o/r/pull/1",
              "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(
             db, project=project, requested_items=["structured_data"],
             token="t", scan_urls=[],
-            site_meta={"schema": {"name": "X", "url": "https://x.com"}}, bot_policy={},
+            site_meta={"domain": "x.com", "schema": {"name": "X", "url": "https://x.com"}}, bot_policy={},
         )
     # Found the nested file (no longer "not found") — real, legitimate
     # conflict instead: the fixture has no </head> to inject into.
@@ -151,12 +151,12 @@ async def test_t_kit_html_entry_path_genuinely_missing_still_conflicts():
     project = {"project_id": "p1", "user_id": "u1", "github_owner": "o",
                "github_repo": "r", "branch": "main"}
 
-    with patch("services.seo.visibility_apply.fetch_file", new=AsyncMock(return_value=None)), \
-         patch("services.seo.visibility_apply.find_html_entry_path", new=AsyncMock(return_value=None)), \
-         patch("services.seo.visibility_apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
-         patch("services.seo.visibility_apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
-         patch("services.seo.visibility_apply.commit_files", new=AsyncMock(return_value={"ok": True})), \
-         patch("services.seo.visibility_apply.open_or_reuse_pr", new=AsyncMock(return_value={
+    with patch("services.seo.kit_engine.fetch_file", new=AsyncMock(return_value=None)), \
+         patch("services.seo.kit_engine.find_html_entry_path", new=AsyncMock(return_value=None)), \
+         patch("services.seo.kit_engine.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
+         patch("services.seo.kit_engine.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
+         patch("services.seo.kit_engine.commit_files", new=AsyncMock(return_value={"ok": True})), \
+         patch("services.seo.kit_engine.open_or_reuse_pr", new=AsyncMock(return_value={
              "ok": True, "pr_url": "https://github.com/o/r/pull/1",
              "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(
@@ -183,11 +183,11 @@ async def test_t_kit_apply_preserves_existing_files_llms_txt():
             return "# A pre-existing llms.txt from some other tool\n"
         return None
 
-    with patch("services.seo.visibility_apply.fetch_file", new=AsyncMock(side_effect=fake_fetch)), \
-         patch("services.seo.visibility_apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
-         patch("services.seo.visibility_apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
-         patch("services.seo.visibility_apply.commit_files", new=AsyncMock(return_value={"ok": True})), \
-         patch("services.seo.visibility_apply.open_or_reuse_pr", new=AsyncMock(return_value={
+    with patch("services.seo.kit_engine.fetch_file", new=AsyncMock(side_effect=fake_fetch)), \
+         patch("services.seo.kit_engine.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
+         patch("services.seo.kit_engine.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
+         patch("services.seo.kit_engine.commit_files", new=AsyncMock(return_value={"ok": True})), \
+         patch("services.seo.kit_engine.open_or_reuse_pr", new=AsyncMock(return_value={
              "ok": True, "pr_url": "https://github.com/o/r/pull/1",
              "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(
@@ -215,11 +215,11 @@ async def test_t_kit_apply_force_overwrites_existing_llms_txt():
             return "# A pre-existing llms.txt from some other tool\n"
         return None
 
-    with patch("services.seo.visibility_apply.fetch_file", new=AsyncMock(side_effect=fake_fetch)), \
-         patch("services.seo.visibility_apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
-         patch("services.seo.visibility_apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
-         patch("services.seo.visibility_apply.commit_files", new=AsyncMock(return_value={"ok": True})) as mock_commit, \
-         patch("services.seo.visibility_apply.open_or_reuse_pr", new=AsyncMock(return_value={
+    with patch("services.seo.kit_engine.fetch_file", new=AsyncMock(side_effect=fake_fetch)), \
+         patch("services.seo.kit_engine.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
+         patch("services.seo.kit_engine.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
+         patch("services.seo.kit_engine.commit_files", new=AsyncMock(return_value={"ok": True})) as mock_commit, \
+         patch("services.seo.kit_engine.open_or_reuse_pr", new=AsyncMock(return_value={
              "ok": True, "pr_url": "https://github.com/o/r/pull/1",
              "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(
@@ -237,12 +237,16 @@ async def test_t_kit_apply_force_overwrites_existing_llms_txt():
 async def test_t_kit_apply_gated_off_while_apply_flag_off():
     from routers.visibility import apply_kit, ApplyBody
     db = MagicMock()
+    db.visibility_items.count_documents = AsyncMock(return_value=12)
     db.cto_projects.find_one = AsyncMock(return_value={
         "project_id": "p1", "user_id": "u1", "github_owner": "o", "github_repo": "r",
     })
-    with patch("routers.visibility.current_dev", new=AsyncMock(return_value={"user_id": "u1"})), \
-         patch("routers.visibility.get_db", return_value=db), \
-         patch("services.feature_flags.is_enabled", new=AsyncMock(return_value=False)):
+    with (
+        patch("routers.visibility.current_dev", new=AsyncMock(return_value={"user_id": "u1"})),
+        patch("routers.visibility.get_db", return_value=db),
+        patch("services.feature_flags.is_enabled", new=AsyncMock(return_value=False)),
+        patch("services.seo.kit_engine.kit_apply_enabled", new=AsyncMock(return_value={"enabled": False, "reason": "flag_off", "source": "flag"})),
+    ):
         from fastapi import HTTPException
         with pytest.raises(HTTPException) as exc_info:
             await apply_kit("p1", ApplyBody(items=["ai_crawler_policy"]), authorization="Bearer x")
@@ -265,6 +269,7 @@ async def test_t_kit_apply_proceeds_past_r9_gate_to_quota_gate_when_flag_on():
     from routers.visibility import apply_kit, ApplyBody
     from fastapi import HTTPException
     db = MagicMock()
+    db.visibility_items.count_documents = AsyncMock(return_value=12)
     db.cto_projects.find_one = AsyncMock(return_value={
         "project_id": "p1", "user_id": "u1", "github_owner": "o", "github_repo": "r",
     })
@@ -306,6 +311,7 @@ async def test_t_kit_apply_records_task_only_on_real_success():
 
     def _make_db():
         db = MagicMock()
+        db.visibility_items.count_documents = AsyncMock(return_value=12)
         db.cto_projects.find_one = AsyncMock(return_value={
             "project_id": "p1", "user_id": "u1", "github_owner": "o", "github_repo": "r",
         })
@@ -324,7 +330,7 @@ async def test_t_kit_apply_records_task_only_on_real_success():
     db = _make_db()
     with common_patches[0], common_patches[1], common_patches[2], common_patches[3], \
          patch("routers.visibility.get_db", return_value=db), \
-         patch("services.seo.visibility_apply.apply_visibility_kit",
+         patch("services.seo.kit_engine.run_visibility_kit",
                new=AsyncMock(return_value={"ok": True, "pr_url": "https://x/pull/1"})), \
          patch("services.scan_fix_quota.record_scan_fixes", new=AsyncMock()) as mock_record:
         await apply_kit("p1", ApplyBody(items=["ai_crawler_policy"]), authorization="Bearer x")
@@ -334,7 +340,7 @@ async def test_t_kit_apply_records_task_only_on_real_success():
     db2 = _make_db()
     with common_patches[0], common_patches[1], common_patches[2], common_patches[3], \
          patch("routers.visibility.get_db", return_value=db2), \
-         patch("services.seo.visibility_apply.apply_visibility_kit",
+         patch("services.seo.kit_engine.run_visibility_kit",
                new=AsyncMock(return_value={"ok": False, "error": "no_implemented_items_in_request"})), \
          patch("services.scan_fix_quota.record_scan_fixes", new=AsyncMock()) as mock_record2:
         await apply_kit("p1", ApplyBody(items=["ai_crawler_policy"]), authorization="Bearer x")
@@ -378,7 +384,7 @@ async def test_t_kit_score_calculation_pr_created_is_half_weight():
     assert out["apply_enabled"] is False
     # 2026-08-31 — every state response carries the honest pricing note
     # (no separate Kit price, free for now, still 1 task on apply).
-    assert "free" in out["pricing_note"].lower()
+    assert "included in your current plan" in out["pricing_note"].lower()
     assert "1 task" in out["pricing_note"]
 
 
@@ -396,7 +402,7 @@ def test_t_kit_catalog_weights_sum_to_100_and_pr_created_half_documented():
 
 # ── t_kit_branding_in_correct_places ─────────────────────────────────
 def test_t_kit_branding_in_correct_places():
-    from services.seo.visibility_apply import _render_pr_body
+    from services.seo.kit_engine import _render_pr_body
     body = _render_pr_body(["preferred_sources", "llms_txt"], [], ["index.html", "llms.txt"], "auremcto/x")
     assert "Created by AUREM Visibility Kit" in body
     assert "news.google.com" in body  # CSP note only added when preferred_sources is applied

@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from cto_services.auth import current_dev
 from cto_services.db import get_db
+from services.subscription_tiers import KIT_PRICING_NOTE
 from services.team_permissions import check_permission
 
 router = APIRouter(prefix="/visibility", tags=["Visibility Kit"])
@@ -51,6 +52,10 @@ async def get_state(project_id: str, authorization: str = Header(None)):
         raise HTTPException(404, "project_not_found_or_not_yours")
 
     items = await db.visibility_items.find({}, {"_id": 0}).sort("sort", 1).to_list(20)
+    if not items:
+        raise HTTPException(
+            503, "Visibility catalog is empty — run scripts/seed_visibility_items.py."
+        )
     states = {
         s["item_id"]: s
         async for s in db.visibility_state.find({"project_id": project_id}, {"_id": 0})
@@ -89,10 +94,7 @@ async def get_state(project_id: str, authorization: str = Header(None)):
         # 2026-08-31 — no separate Kit price exists; free for a limited
         # promotional period on every plan. Applying still draws 1 task
         # from your existing monthly quota (services/scan_fix_quota.py).
-        "pricing_note": (
-            "Free to use for a limited time — Apply still uses 1 task "
-            "from your plan's regular monthly quota, no extra charge."
-        ),
+        "pricing_note": KIT_PRICING_NOTE,
     }
 
 
@@ -142,12 +144,18 @@ async def apply_kit(project_id: str, body: ApplyBody, authorization: str = Heade
     # OFF, independent of the billing-tier gate below — flipped ON only
     # once R9 is proven live on production (a real ship, PR->merge->Live,
     # not just the flag being on). See LOOP-STATE.md R9 carry-forward note.
-    from services.feature_flags import is_enabled as _kit_flag_enabled
-    if not await _kit_flag_enabled("kit_apply_enabled", user_id=user_id):
+    from services.seo.kit_engine import kit_apply_enabled
+    gate = await kit_apply_enabled(db, user_id=user_id, project=proj, http_get=None)
+    if not gate["enabled"]:
         raise HTTPException(403, {
             "error": "apply_not_yet_enabled",
             "message": "Apply available once ship-via-PR (R9) is proven live on production.",
         })
+
+    if await db.visibility_items.count_documents({}) == 0:
+        raise HTTPException(
+            503, "Visibility catalog is empty — run scripts/seed_visibility_items.py."
+        )
 
     # 2026-08-31 — quota gate replaces the old Pro-tier paywall. Free
     # for a limited time: every tier can apply, but it still costs 1
@@ -166,11 +174,16 @@ async def apply_kit(project_id: str, body: ApplyBody, authorization: str = Heade
     )
     bot_policy = (policy_doc or {}).get("training_choice", {})
 
-    from services.seo.visibility_apply import apply_visibility_kit
-    result = await apply_visibility_kit(
-        db, project=proj, requested_items=body.items, token=token,
-        scan_urls=proj.get("scan_urls") or [], site_meta=proj.get("site_meta") or {},
-        bot_policy=bot_policy, force=body.force,
+    from services.seo.kit_engine import KitOptions, run_visibility_kit
+    result = await run_visibility_kit(
+        db,
+        project=proj,
+        requested_items=body.items,
+        token=token,
+        scan_urls=proj.get("scan_urls") or [],
+        site_meta=proj.get("site_meta") or {},
+        bot_policy=bot_policy,
+        options=KitOptions(force=body.force),
     )
     # Deduct ONLY on a real successful PR open — never pre-deduct, and
     # never charge for a request that failed/found nothing to apply.
@@ -206,6 +219,13 @@ async def revert_application(application_id: str, authorization: str = Header(No
     from services.loop_safety import close_and_retract
     owner = proj.get("github_owner") or proj.get("owner")
     repo = proj.get("github_repo") or proj.get("repo")
+    from services.loop_safety import get_pr_status
+    st = await get_pr_status(owner=owner, repo=repo, pr_number=app_doc.get("pr_number"), token=token)
+    states = await db.visibility_state.find({"project_id": app_doc["project_id"], "item_id": {"$in": app_doc["items"]}}).to_list(20)
+    if (st.get("ok") and st.get("merged")) or any(s.get("status") in ("pr_merged", "live") for s in states):
+        raise HTTPException(409, {"error": "merged_files_live", "message": "merged files live — revert PR or file edit"})
+    if not st.get("ok"):
+        raise HTTPException(503, "could not verify PR merge state — retry later")
     result = await close_and_retract(
         owner=owner, repo=repo, pr_number=app_doc.get("pr_number"),
         branch=app_doc["branch"], token=token,

@@ -32,11 +32,9 @@ ALL_FIX_TOOLS = frozenset({
 })
 
 FIX_TOOLS_BY_TIER: dict[str, frozenset] = {
-    # 2026-08-31 — Visibility Kit Apply is FREE on every tier (including
-    # Free) for a limited promotional period — no plan-upgrade paywall.
-    # It still draws from the SAME monthly task quota as every other
-    # fix tool below (1 fix = 1 task) — "free" means no extra charge on
-    # top of your plan, not unmetered.
+    # Visibility Kit Apply: included in the current plan, 1 task per apply
+    # from the same monthly quota — see services/subscription_tiers.py::KIT_PRICING_NOTE.
+    # "Free for a limited time" is retired copy.
     "free":    frozenset({"visibility-kit"}),
     "starter": frozenset({"vanguard-scan", "visibility-kit"}),
     "pro":     frozenset({"vanguard-scan", "health-scan", "visibility-kit"}),

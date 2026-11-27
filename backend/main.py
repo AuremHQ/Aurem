@@ -267,6 +267,13 @@ async def _lifespan_start_core_cron_tasks(app):
         db_getter=lambda: app.state.db,
         long_lived=True,
     )
+    from services.seo.kit_engine import schedule_kit_merge_cron
+    app.state.kit_merge_cron_task = _supervise(
+        schedule_kit_merge_cron(lambda: app.state.db),
+        name="kit_merge_cron",
+        db_getter=lambda: app.state.db,
+        long_lived=True,
+    )
 
 
 async def _lifespan_start_billing_and_health_tasks(app):
@@ -1556,6 +1563,14 @@ async def lifespan(app: FastAPI):
                 logger.warning("init_prod_collections errors: %s", result["errors"])
         except Exception as _e:
             logger.warning(f"init_prod_collections failed: {_e}")
+    # Visibility Kit 2.0 P0-5 — idempotent catalog seed (upsert by key).
+    try:
+        from scripts.seed_visibility_items import seed_visibility_items
+        _seed = await seed_visibility_items(app.state.db)
+        if _seed.get("upserted"):
+            logger.info("visibility catalog seeded: %s items", _seed["upserted"])
+    except Exception as e:
+        logger.warning(f"visibility catalog seed failed: {e}")
         # Iter 158 — seed default thinking_hints (idempotent, never
         # overwrites admin edits, only inserts missing hint_ids).
         try:

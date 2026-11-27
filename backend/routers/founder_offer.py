@@ -536,4 +536,7 @@ def _preview_summary(result: dict) -> dict:
         "committed":      bool(result.get("committed")),
         "commit_sha":     result.get("commit_sha"),
         "commit_url":     result.get("commit_url"),
+        "pr_url": result.get("pr_url"),
+        "pr_number": result.get("pr_number"),
+        "branch": result.get("branch"),
     }

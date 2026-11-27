@@ -1044,7 +1044,10 @@ async def dispatch_pull_request_webhook(db, *, payload: dict, action: str) -> di
                       "updated_at": time.time()}},
             upsert=True,
         )
-        return {"routed": "kit", "labels": kit_labels}
+        if action == "closed" and merged:
+            from services.seo.kit_engine import promote_kit_pr_merged
+            await promote_kit_pr_merged(db, pr_number=pr_number, branch=head_ref, merge_commit_sha=pr.get("merge_commit_sha"))
+    return {"routed": "kit", "labels": kit_labels}
 
     # FIX_one_branch_for_all_fixes — shared fix-batch PRs. Deliberately
     # a SEPARATE branch from `aura:ship` above: a batch PR is never a
