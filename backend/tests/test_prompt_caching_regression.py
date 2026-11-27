@@ -1,7 +1,8 @@
 """Backend regression for prompt-caching fix (Section 16).
 
-Flag LLM_PROMPT_CACHING_ENABLED=0 (default). We only verify that normal
-chat/send flows still work end-to-end and no traceback surfaces.
+Flag LLM_PROMPT_CACHING_ENABLED defaults ON since 2026-11-27
+(`=0` switches it off). We only verify that normal chat/send flows
+still work end-to-end and no traceback surfaces.
 """
 import os
 import time

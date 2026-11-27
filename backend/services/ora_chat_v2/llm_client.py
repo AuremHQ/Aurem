@@ -205,6 +205,18 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
     extra_body: dict = {}
     if reasoning:
         extra_body[os.getenv("LLM_REASONING_PARAM", "enable_thinking")] = True
+    # 2026-11-27 — sticky session_id for the provider's server-side
+    # cache: the chat turn's session (set by engine.run_turn via
+    # prompt_cache_context) rides along the same way the raw
+    # transports already send it, so repeat turns route to the same
+    # warm replica. OpenRouter-only: this client is vendor-swappable,
+    # and a strict non-OpenRouter endpoint could 400 on an unknown
+    # top-level field. No cache_control marker here on purpose — see
+    # engine.run_turn for why the chat path never stamps one.
+    from services.llm._state import get_prompt_cache_context
+    _sid = get_prompt_cache_context().get("session_id")
+    if _sid and "openrouter" in (resolved["base_url"] or "").lower():
+        extra_body["session_id"] = _sid
 
     tool_accum: dict[int, dict] = {}
     usage: dict = {}
@@ -254,6 +266,20 @@ async def stream_chat(*, messages: list, tools: Optional[list] = None,
             if u:
                 usage = {"input_tokens": u.prompt_tokens or 0,
                           "output_tokens": u.completion_tokens or 0}
+                # 2026-11-27 — keep the provider-reported cached-token
+                # count: log_real_usage already records it into
+                # real_llm_usage (the cache-stats endpoint reads it
+                # from there), but only when the usage dict carries
+                # it — without this the chat path always logged 0.
+                # isinstance guard: test fakes yield Mock-ish usage
+                # objects whose attributes are not real ints.
+                try:
+                    _cached = getattr(getattr(u, "prompt_tokens_details", None),
+                                      "cached_tokens", None)
+                    if isinstance(_cached, int) and _cached > 0:
+                        usage["cached_tokens"] = _cached
+                except Exception as e:                              # noqa: BLE001
+                    logger.debug("cached_tokens read skipped: %r", e)
     except Exception as e:  # noqa: BLE001
         logger.warning("ora_chat_v2 llm_client stream error: %r", e)
         try:

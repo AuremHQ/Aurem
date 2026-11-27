@@ -55,7 +55,7 @@ def test_substantive_reply_with_soft_clarifier_is_not_discarded():
         "Here's where those three flags stand: SEMANTIC_MODE_ROUTER_ENABLED "
         "gates the semantic router in services/semantic_mode_router.py and "
         "defaults off; LLM_PROMPT_CACHING_ENABLED gates the prompt-cache "
-        "context manager and also defaults off; the input normalizer is "
+        "context manager and also defaults on; the input normalizer is "
         "wired as a Pydantic validator on the shared ChatBody model. If you "
         "want, I can be more specific about any one of them — just say which."
     )

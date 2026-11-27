@@ -105,15 +105,22 @@ def test_today_line_defaults_to_toronto_without_env(monkeypatch):
 
 
 def test_live_turn_system_prompt_contains_correct_toronto_date():
-    """Full run_turn payload: the system prompt opens with a "Today is"
-    line carrying Toronto's actual current date and time."""
+    """Full run_turn payload: the system prompt carries a "Today is"
+    line with Toronto's actual current date and time. Since the
+    2026-11-27 prompt-cache reorder the date line sits at the END
+    (static prompt first, dynamic content last) — it must still be
+    present and correct, just no longer the opening line."""
     from zoneinfo import ZoneInfo
     messages = asyncio.run(_capture_run_turn(
         {"session_id": "s1", "messages": []}, "what time is it right now?",
         user_tz="America/Toronto"))
     system = messages[0]["content"]
     assert messages[0]["role"] == "system"
-    assert system.startswith("Today is ")
+    assert "Today is " in system
+    # Date line is the tail now: after the static catalog, before the
+    # runtime-context block that closes the prompt.
+    assert system.index("Today is ") > system.index("[/ACTION CATALOG]")
+    assert system.index("Today is ") < system.index("Runtime context")
     today = datetime.now(timezone.utc).astimezone(ZoneInfo("America/Toronto"))
     assert today.strftime("%A, %B %d, %Y") in system
     assert "(America/Toronto)" in system

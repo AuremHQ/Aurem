@@ -102,10 +102,13 @@ async def test_payload_carries_privacy_directives():
     assert provider["allow_fallbacks"] is False, "allow_fallbacks MUST be False"
     assert "deepseek" in provider["order"], "DeepSeek must be in provider order"
 
-    # Anti-cache + attribution headers
+    # Attribution headers (2026-11-27: the old `X-No-Cache: "true"`
+    # assertion was REMOVED with the header itself — it told
+    # OpenRouter/DeepSeek to skip its server-side cache on every call,
+    # the opposite of the prompt-cache fix. The header must be ABSENT.)
     h = captured["headers"]
     assert h["Authorization"].startswith("Bearer ")
-    assert h["X-No-Cache"] == "true"
+    assert "X-No-Cache" not in h, "X-No-Cache was deleted 2026-11-27 (it killed the server cache)"
     assert h["HTTP-Referer"] == "https://aurem.dev"
     assert h["X-Title"] == "AUREM Dev"
 

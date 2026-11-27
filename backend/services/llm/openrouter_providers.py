@@ -570,7 +570,7 @@ async def _call_deepseek(messages: list, system: str = "",
     # the parent `services/llm/__init__.py` imports THIS module at
     # load time (see the D-2d re-export block there).
     from services.llm import _openrouter_key
-    from ._state import _set_last_provider, get_prompt_cache_context
+    from ._state import _set_last_provider, get_prompt_cache_context, prompt_caching_enabled
     from ._probes import _deepseek_model
     from ._routing import _DEEPSEEK_HOSTS
     from .openrouter_client import (
@@ -591,7 +591,11 @@ async def _call_deepseek(messages: list, system: str = "",
         # callback domain, an unrelated concern).
         "HTTP-Referer": _OPENROUTER_REFERER,
         "X-Title": f"AUREM - {feature}" if feature else "AUREM",
-        "X-No-Cache": "true",
+        # 2026-11-27 — the `X-No-Cache: "true"` header that used to sit
+        # here told OpenRouter/DeepSeek to skip its server-side cache
+        # on every call, which is the opposite of what the prompt-cache
+        # fix wants. Deleted, not moved: DeepSeek caches automatically
+        # server-side, so removing the header is the whole fix here.
     }
     msgs = ([{"role": "system", "content": system}] + messages) if system else messages
 
@@ -619,7 +623,7 @@ async def _call_deepseek(messages: list, system: str = "",
         # replica that already holds the warm cache. Flag-gated + only
         # present when a caller opted in via prompt_cache_context();
         # every other call keeps today's exact payload shape.
-        if os.getenv("LLM_PROMPT_CACHING_ENABLED", "0") == "1":
+        if prompt_caching_enabled():
             _sid = get_prompt_cache_context().get("session_id")
             if _sid:
                 p["session_id"] = _sid

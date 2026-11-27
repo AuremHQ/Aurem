@@ -189,7 +189,7 @@ async def call_openrouter_model(
         _DEEPSEEK_DIRECT_MODEL, _GROQ_MODEL,
         _call_deepseek_direct, _call_groq,
     )
-    from ._state import _set_last_provider, get_prompt_cache_context
+    from ._state import _set_last_provider, get_prompt_cache_context, prompt_caching_enabled
 
     api_key = _openrouter_key()
     if not api_key:
@@ -206,11 +206,13 @@ async def call_openrouter_model(
         "Content-Type": "application/json",
     }
     # 2026-09-22 — Section 16 cost-efficiency fix. Opt-in, flag-gated
-    # prompt caching. `LLM_PROMPT_CACHING_ENABLED` defaults OFF; even
-    # when on, this only ever fires for a caller that explicitly wrapped
-    # itself in `prompt_cache_context(...)` (see _state.py) — every
-    # other caller gets the EXACT same plain-string `system` content
-    # and payload shape as before this change.
+    # prompt caching. `LLM_PROMPT_CACHING_ENABLED` defaults ON (since
+    # 2026-11-27; `=0` switches it off); even when on, the
+    # `cache_control` marker only ever fires for a caller that
+    # explicitly wrapped itself in `prompt_cache_context(...)`
+    # (see _state.py) — every other caller gets the EXACT same
+    # plain-string `system` content and payload shape as before
+    # this change.
     #
     # `cache_control` (Anthropic's own mechanism, passed through by
     # OpenRouter) is the only one of the 4 providers in this file that
@@ -220,7 +222,7 @@ async def call_openrouter_model(
     # DELIBERATELY restricted to `anthropic/` model slugs; applying it
     # to a non-Anthropic backend would be a silent no-op at best and
     # an unverified request-shape risk at worst.
-    _caching_enabled = os.getenv("LLM_PROMPT_CACHING_ENABLED", "0") == "1"
+    _caching_enabled = prompt_caching_enabled()
     _cache_hint = get_prompt_cache_context() if _caching_enabled else {"session_id": None, "cache_system": False}
     _use_cache_control = bool(_cache_hint.get("cache_system")) and model.startswith("anthropic/")
     _sticky_session_id = _cache_hint.get("session_id")
@@ -541,7 +543,7 @@ async def stream_openrouter_model(
     usage on streams that request it).
     """
     from services.llm import _openrouter_key
-    from ._state import _set_last_provider, get_prompt_cache_context
+    from ._state import _set_last_provider, get_prompt_cache_context, prompt_caching_enabled
 
     api_key = _openrouter_key()
     if not api_key:
@@ -552,7 +554,7 @@ async def stream_openrouter_model(
         "X-Title": f"AUREM - {feature}" if feature else "AUREM",
         "Content-Type": "application/json",
     }
-    _caching_enabled = os.getenv("LLM_PROMPT_CACHING_ENABLED", "0") == "1"
+    _caching_enabled = prompt_caching_enabled()
     _cache_hint = get_prompt_cache_context() if _caching_enabled else {"session_id": None, "cache_system": False}
     _use_cache_control = bool(_cache_hint.get("cache_system")) and model.startswith("anthropic/")
     _sticky_session_id = _cache_hint.get("session_id")

@@ -123,8 +123,9 @@ async def _call_and_capture(model: str, monkeypatch) -> list:
 
 @pytest.mark.asyncio
 async def test_flag_off_content_stays_plain_string_even_if_caller_opts_in(monkeypatch):
-    """Regression proof: with the flag OFF (today's default), a caller
-    that sets cache_system=True must see ZERO change — plain string,
+    """Regression proof: with the flag OFF (explicitly disabled via
+    `LLM_PROMPT_CACHING_ENABLED=0`), a caller that sets
+    cache_system=True must see ZERO change — plain string,
     no session_id key at all."""
     monkeypatch.setenv("LLM_PROMPT_CACHING_ENABLED", "0")
     from services.llm._state import prompt_cache_context
@@ -245,3 +246,56 @@ async def test_deepseek_payload_flag_on_session_id_present(monkeypatch):
     # DeepSeek never gets a cache_control marker — confirm the system
     # message stays a plain string even with cache_system=True.
     assert captured[0]["messages"][0]["content"] == "static rules"
+
+
+# ══════════ 4. Default ON (2026-11-27 fix) ═══════════════════════════
+# The flag defaulted OFF from 2026-09-22 to 2026-11-27, so every call
+# skipped the prompt-cache path unless the deployer set the env var.
+# Default is now ON; `LLM_PROMPT_CACHING_ENABLED=0` is the kill-switch.
+
+def test_prompt_caching_enabled_helper_defaults_on(monkeypatch):
+    from services.llm._state import prompt_caching_enabled
+    monkeypatch.delenv("LLM_PROMPT_CACHING_ENABLED", raising=False)
+    assert prompt_caching_enabled() is True
+    monkeypatch.setenv("LLM_PROMPT_CACHING_ENABLED", "1")
+    assert prompt_caching_enabled() is True
+    monkeypatch.setenv("LLM_PROMPT_CACHING_ENABLED", "0")
+    assert prompt_caching_enabled() is False
+
+
+@pytest.mark.asyncio
+async def test_flag_default_on_env_unset_wraps_claude_block(monkeypatch):
+    """Env var NOT SET AT ALL: the transport must behave exactly like
+    flag ON — cache_control block + session_id. This is the test that
+    fails on the old default ("0") and passes on the new one ("1")."""
+    monkeypatch.delenv("LLM_PROMPT_CACHING_ENABLED", raising=False)
+    from services.llm._state import prompt_cache_context
+    async with prompt_cache_context(session_id="sess-1", cache_system=True):
+        captured = await _call_and_capture("anthropic/claude-sonnet-4.5", monkeypatch)
+    payload = captured[0]
+    content = payload["messages"][0]["content"]
+    assert isinstance(content, list)
+    assert content == [{
+        "type": "text", "text": "You are a helpful assistant.",
+        "cache_control": {"type": "ephemeral"},
+    }]
+    assert payload["session_id"] == "sess-1"
+
+
+@pytest.mark.asyncio
+async def test_deepseek_payload_flag_default_on_env_unset_session_id_present(monkeypatch):
+    """Same default-ON proof for the DeepSeek path (its own flag read)."""
+    monkeypatch.delenv("LLM_PROMPT_CACHING_ENABLED", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    from services.llm._state import prompt_cache_context
+    from services.llm.openrouter_providers import _call_deepseek
+
+    captured: list = []
+    fake_client = _FakeHttpxClient(captured)
+    with patch("httpx.AsyncClient", return_value=fake_client), \
+         patch("services.retry_guard.get_breaker") as mock_breaker:
+        mock_breaker.return_value.allow.return_value = True
+        mock_breaker.return_value.record_success.return_value = None
+        async with prompt_cache_context(session_id="sess-1", cache_system=True):
+            await _call_deepseek(messages=[{"role": "user", "content": "hi"}], system="static rules")
+    assert captured[0]["session_id"] == "sess-1"
