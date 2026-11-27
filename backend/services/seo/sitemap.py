@@ -41,6 +41,10 @@ def _is_placeholder_site_url(site_url: str | None) -> bool:
     host = (parsed.hostname or str(site_url).strip().split(chr(47))[0] or str()).lower()
     return host in _PLACEHOLDER_HOSTS
 
+# Public alias (Kit 2.0 P0 drift fix): services.seo.robots_txt and
+# services.seo.orchestrator import is_placeholder_site_url by this name.
+is_placeholder_site_url = _is_placeholder_site_url
+
 def extract_routes(paths: list[str]) -> list[str]:
     """Pure function. Given a flat list of repo paths, return the
     routes a search engine should index. Deduped, sorted, no
@@ -205,9 +209,14 @@ def merge_lastmod(existing_xml: str | None, urls: list[dict], scan_date: str) ->
     freshly-scanned URLs are added on top (never the other way around
     — a stale/empty scan must never be able to delete real, live
     entries someone else already has indexed)."""
+    def _norm(loc: str) -> str:
+        # Trailing-slash-insensitive: a rendered sitemap stores the root
+        # as "https://x" while a scan reports "https://x/"; collapse both
+        # to one canonical loc so a merge never duplicates the root.
+        return loc.rstrip("/") or loc
     fresh = [
-        u["loc"] for u in urls
+        _norm(u["loc"]) for u in urls
         if not any(h in u["loc"] for h in _PLACEHOLDER_HOSTS)
     ]
-    merged_locs = list(dict.fromkeys(fresh + _existing_locs(existing_xml)))
+    merged_locs = list(dict.fromkeys(fresh + [_norm(l) for l in _existing_locs(existing_xml)]))
     return render_sitemap([{"loc": loc} for loc in merged_locs], scan_date)

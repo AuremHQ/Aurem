@@ -340,11 +340,12 @@ async def test_orchestrator_dry_run_full_flow(monkeypatch):
         return None
     monkeypatch.setattr(orch, "_fetch_file", fake_file)
 
-    # 4. commit_files must NOT be called in dry_run mode — assert that.
-    commit_mock = AsyncMock(side_effect=AssertionError(
-        "commit_files must not be called in dry_run mode"
+    # 4. ship_files_via_pr must NOT be called in dry_run mode — assert that.
+    ship_mock = AsyncMock(side_effect=AssertionError(
+        "ship_files_via_pr must not be called in dry_run mode"
     ))
-    monkeypatch.setattr(orch, "commit_files", commit_mock)
+    monkeypatch.setattr("services.seo.kit_engine.ship_files_via_pr", ship_mock)
+    monkeypatch.setattr("services.pat_vault.get_repo_token", AsyncMock(return_value="fake-token"))
 
     # 5. Stub alt provider so we don't hit the LLM.
     async def stub_alt(src, ctx):
@@ -376,8 +377,8 @@ async def test_orchestrator_dry_run_full_flow(monkeypatch):
     assert "public/about.html" in paths
     assert "public/robots.txt" in paths
     assert "public/sitemap.xml" in paths
-    # commit_files was NOT called.
-    commit_mock.assert_not_called()
+    # ship_files_via_pr was NOT called.
+    ship_mock.assert_not_called()
     # Errors must be empty on clean run.
     assert result["errors"] == []
 
@@ -415,8 +416,10 @@ async def test_orchestrator_returns_nothing_to_fix_on_clean_site(monkeypatch):
     'nothing to fix' note."""
     from services.seo import orchestrator as orch
     from services.seo.orchestrator import SeoOptions, run_seo_fixes
-    from services.seo.robots_txt import render_robots_txt
-    from services.seo.sitemap   import render_sitemap_xml
+    from datetime import datetime, timezone
+
+    from services.seo.robots_txt import apply_managed_block, render_robots_txt
+    from services.seo.sitemap import merge_lastmod, render_sitemap_xml
 
     fake_db = MagicMock()
     fake_db.cto_projects.find_one = AsyncMock(return_value={
@@ -432,14 +435,15 @@ async def test_orchestrator_returns_nothing_to_fix_on_clean_site(monkeypatch):
 
     async def fake_file(owner, repo, path, branch, token):
         if path == "robots.txt":
-            return render_robots_txt(site_url="https://x")
+            return apply_managed_block(render_robots_txt(site_url="https://x"), bot_policy={})
         if path == "sitemap.xml":
-            return render_sitemap_xml(["/"], "https://x")
+            return merge_lastmod(render_sitemap_xml(["/"], "https://x"), [], datetime.now(timezone.utc).date().isoformat())
         return None
     monkeypatch.setattr(orch, "_fetch_file", fake_file)
 
-    commit_mock = AsyncMock()
-    monkeypatch.setattr(orch, "commit_files", commit_mock)
+    ship_mock = AsyncMock()
+    monkeypatch.setattr("services.seo.kit_engine.ship_files_via_pr", ship_mock)
+    monkeypatch.setattr("services.pat_vault.get_repo_token", AsyncMock(return_value="fake-token"))
 
     result = await run_seo_fixes(
         user_id="u", project_id="p",
@@ -448,5 +452,5 @@ async def test_orchestrator_returns_nothing_to_fix_on_clean_site(monkeypatch):
     assert result["ok"] is True
     assert result["committed"] is False
     assert "nothing to fix" in result.get("note", "").lower()
-    commit_mock.assert_not_called()
+    ship_mock.assert_not_called()
 # Tier 3 (2026-11-18): the sitemap/robots renderers used to interpolate# https://yourdomain.com when no real domain was configured. These tests# pin the replacement behaviour: sitemap refuses, robots omits the line.def test_tier3_render_sitemap_xml_rejects_placeholder_site_url():    from services.seo.sitemap import render_sitemap_xml    for bad in ("", "https://yourdomain.com", "https://example.com", "example.org/foo"):        with pytest.raises(ValueError):            render_sitemap_xml(["/"], bad)def test_tier3_render_robots_txt_omits_sitemap_without_real_site_url():    from services.seo.robots_txt import render_robots_txt    for bad in ("", "https://yourdomain.com"):        body = render_robots_txt(site_url=bad)        assert "yourdomain.com" not in body        assert "Sitemap:" not in body    body = render_robots_txt(site_url="https://aurem.dev")    assert "Sitemap: https://aurem.dev/sitemap.xml" in bodydef test_tier3_patch_sitemap_skips_placeholder_site_url():    from services.seo.sitemap import patch_sitemap    assert patch_sitemap(paths=["/"], site_url="https://yourdomain.com", has_public_dir=True) is None    assert patch_sitemap(paths=["/"], site_url="", has_public_dir=True) is None

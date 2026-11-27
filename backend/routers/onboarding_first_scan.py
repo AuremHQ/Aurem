@@ -207,24 +207,30 @@ async def apply_first_scan_fixes(
             {"project_id": body.project_id}, {"$unset": {"fix_claimed_at": ""}})
         raise
 
-    if not result.get("ok") or not result.get("committed"):
+    if not result.get("ok") or not result.get("pr_url"):
         await db.first_scan_results.update_one(
             {"project_id": body.project_id}, {"$unset": {"fix_claimed_at": ""}})
         raise HTTPException(
             502,
-            "Couldn't commit the fix right now — you can still ask me to "
+            "Couldn't ship the fix as a PR right now — you can still ask me to "
             "build or fix anything in chat.",
         )
     await db.first_scan_results.update_one(
         {"project_id": body.project_id},
         {"$set": {"fix_applied_at": datetime.now(timezone.utc),
                   "commit_sha": result.get("commit_sha"),
+                  "pr_url": result.get("pr_url"),
+                  "pr_number": result.get("pr_number"),
+                  "branch": result.get("branch"),
                   "commit_url": result.get("commit_url"),
                   "files_fixed": result.get("patch_count", 0)}},
     )
     return {
         "ok": True,
         "commit_sha": result.get("commit_sha"),
+        "pr_url": result.get("pr_url"),
+        "pr_number": result.get("pr_number"),
+        "branch": result.get("branch"),
         "commit_url": result.get("commit_url"),
         "files_fixed": result.get("patch_count", 0),
     }

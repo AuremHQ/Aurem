@@ -82,9 +82,9 @@ async def test_catalog_seeded():
     db = client[os.environ["DB_NAME"]]
     items = await db.visibility_items.find({}, {"_id": 0}).to_list(50)
     client.close()
-    catalog = importlib.import_module("migrations.003_visibility_kit").CATALOG_ITEMS
+    catalog = importlib.import_module("scripts.seed_visibility_items").CATALOG_ITEMS_12
     assert {i["key"] for i in items} == {c["key"] for c in catalog}
-    assert sum(i["weight"] for i in items) == 100
+    assert sum(i["weight"] for i in items) == 120
 
 
 def test_branding_present():
@@ -134,19 +134,19 @@ async def test_apply_no_copy_edit_only_writes_managed_paths():
     db.visibility_applications.insert_one = AsyncMock()
     project = {"project_id": "p1", "user_id": "u1", "github_owner": "o",
                "github_repo": "r", "branch": "main"}
-    with patch("services.seo.visibility_apply.fetch_file", new=AsyncMock(return_value=None)), \
-         patch("services.seo.visibility_apply.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
-         patch("services.seo.visibility_apply.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
-         patch("services.seo.visibility_apply.commit_files", new=AsyncMock(return_value={"ok": True})) as mock_commit, \
-         patch("services.seo.visibility_apply.open_or_reuse_pr", new=AsyncMock(return_value={
+    with patch("services.seo.kit_engine.fetch_file", new=AsyncMock(return_value=None)), \
+         patch("services.seo.kit_engine.resolve_git_identity", new=AsyncMock(return_value=("Bot", "b@x.com"))), \
+         patch("services.seo.kit_engine.create_or_reuse_branch", new=AsyncMock(return_value=(True, None))), \
+         patch("services.seo.kit_engine.commit_files", new=AsyncMock(return_value={"ok": True})) as mock_commit, \
+         patch("services.seo.kit_engine.open_or_reuse_pr", new=AsyncMock(return_value={
              "ok": True, "pr_url": "https://github.com/o/r/pull/1",
              "pr_number": 1, "reused": False, "error": None})):
         result = await apply_visibility_kit(
-            db, project=project, requested_items=["ai_crawler_policy", "sitemap_auto", "answer_blocks"],
+            db, project=project, requested_items=["ai_crawler_policy", "sitemap_auto", "answer_blocks", "image_quick_wins"],
             token="t", scan_urls=[{"loc": "https://x.com/"}],
             site_meta={"schema": {"name": "X", "url": "https://x.com"}}, bot_policy={},
         )
     written_paths = set(mock_commit.call_args[0][4].keys())
     assert written_paths <= {"robots.txt", "sitemap.xml"}
-    assert result["advisory_skipped"] == ["answer_blocks"]
+    assert result["advisory_skipped"] == ["image_quick_wins"]
     assert result["ok"] is True

@@ -566,7 +566,7 @@ async def init_prod_collections(db) -> dict:
          "description": "Master kill-switch for the admin bulk GitHub-App revoke tool (/admin/github/bulk-revoke). OFF until the drill-repo live verify (U1-U6: real DELETE /app/installations/{id} behavior) is CONFIRMED against a disposable installation — see GITHUB_BULK_REVOKE_DRILL_VERIFY.md. Flip ON only after that live test."},
         {"flag": "kit_apply_enabled", "enabled": False,
          "tier_allowlist": [], "user_allowlist": [],
-         "description": "Master kill-switch for the Visibility Kit's Apply button (POST /visibility/projects/{id}/apply — opens a real PR via the ship-via-PR/R9 path). OFF until R9 is proven live on production (a real ship completing PR->merge->Live, not just the R9 flag being on) — see LOOP-STATE.md R9 carry-forward note. Flip ON only after that proof."},
+         "description": "Master kill-switch for the Visibility Kit's Apply button (POST /visibility/projects/{id}/apply — opens a real PR via the ship-via-PR/R9 path). OFF until R9 is proven live on production (a real ship completing PR->merge->Live, not just the R9 flag being on) — see LOOP-STATE.md R9 carry-forward note. Flip ON only after that proof. Per-request live-proof: `kit_apply_enabled()` in services/seo/kit_engine.py enables Apply when verify_kit_live() finds a Kit marker on the project's live URL, and records the proof in kit_live_proofs."},
     ]
     inserted_flags: list[str] = []
     for _spec in _SEED_FLAGS:

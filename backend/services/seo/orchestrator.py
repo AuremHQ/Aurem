@@ -7,8 +7,8 @@ Flow:
   3. For each feature enabled by the user's plan tier:
        - Read the files we need via parallel GH fetch (asyncio.gather)
        - Build a SeoPatch via the relevant fixer module
-  4. Atomically commit ALL patches in a single commit using the
-     existing services.github_api_writer.commit_files().
+  4. Ship ALL patches as a draft PR to a throwaway branch using
+     services.seo.kit_engine.ship_files_via_pr() — nothing lands on the base branch directly.
   5. Return a result dict with per-feature patch summary +
      commit metadata (sha, html_url).
 
@@ -27,12 +27,12 @@ import httpx
 
 from cto_services.db import get_db
 from services.repo_context import _fetch_tree, _fetch_file
-from services.github_api_writer import commit_files
 
 from .meta_tags     import SeoPatch, patch_meta_tags
-from .schema_markup import patch_schema_markup
-from .robots_txt    import patch_robots_txt
-from .sitemap       import patch_sitemap
+from . import robots_txt as robots_gen
+from . import schema_markup as schema_gen
+from . import sitemap as sitemap_gen
+from .sitemap import extract_routes, is_placeholder_site_url
 from .image_alts    import patch_image_alts
 
 logger = logging.getLogger(__name__)
@@ -165,6 +165,7 @@ async def run_seo_fixes(
 
     # ── Fix: meta tags + schema + image alts (per HTML file) ─────
     if {"meta", "schema", "alts"} & features:
+        _entry_html_path = next((p for p, h in html_files.items() if "</head>" in h), None)
         for path, html in html_files.items():
             if "meta" in features:
                 p = patch_meta_tags(
@@ -178,18 +179,12 @@ async def run_seo_fixes(
                     patches.append(p)
                     html = p["after"]   # subsequent fixers see the latest
 
-            if "schema" in features:
-                p = patch_schema_markup(
-                    path=path, html=html,
-                    title=options.title,
-                    description=options.description,
-                    url=options.site_url,
-                    author=options.author,
-                    image=options.og_image,
-                )
-                if p:
-                    patches.append(p)
-                    html = p["after"]
+            if "schema" in features and path == _entry_html_path:
+                _site = {"name": options.title, "url": options.site_url, "description": options.description, "author": options.author, "logo_url": options.og_image}
+                _after = schema_gen.apply_managed_block(html, _site)
+                if _after != html:
+                    patches.append(SeoPatch(path=path, before=html, after=_after, action="modify", reason="schema (managed block)"))
+                    html = _after
 
             if "alts" in features:
                 p = await patch_image_alts(
@@ -205,27 +200,24 @@ async def run_seo_fixes(
     if "robots" in features:
         existing_pub_robots  = await _fetch_optional(owner, repo, "public/robots.txt", branch, token)
         existing_root_robots = await _fetch_optional(owner, repo, "robots.txt",        branch, token)
-        rp = patch_robots_txt(
-            existing_public_robots=existing_pub_robots,
-            existing_root_robots=existing_root_robots,
-            site_url=options.site_url,
-            has_public_dir=has_public_dir,
-        )
-        if rp:
-            patches.append(rp)
+        _robots_existing = existing_pub_robots if has_public_dir else existing_root_robots
+        _robots_path = "public/robots.txt" if has_public_dir else "robots.txt"
+        _robots_after = robots_gen.apply_managed_block(_robots_existing, bot_policy={})
+        if _robots_after != (_robots_existing or ""):
+            patches.append(SeoPatch(path=_robots_path, before=_robots_existing or "", after=_robots_after, action="modify" if _robots_existing else "create", reason="robots (managed block)"))
 
     if "sitemap" in features:
         existing_pub_sm  = await _fetch_optional(owner, repo, "public/sitemap.xml", branch, token)
         existing_root_sm = await _fetch_optional(owner, repo, "sitemap.xml",        branch, token)
-        sp = patch_sitemap(
-            paths=all_paths,
-            site_url=options.site_url,
-            has_public_dir=has_public_dir,
-            existing_public_sitemap=existing_pub_sm,
-            existing_root_sitemap=existing_root_sm,
-        )
-        if sp:
-            patches.append(sp)
+        if is_placeholder_site_url(options.site_url):
+            out["errors"].append("sitemap skipped: placeholder site_url — no sitemap emitted")
+        else:
+            _sm_existing = existing_pub_sm if has_public_dir else existing_root_sm
+            _sm_path = "public/sitemap.xml" if has_public_dir else "sitemap.xml"
+            _scan_urls = [{"loc": options.site_url + route} for route in extract_routes(all_paths)]
+            _sm_after = sitemap_gen.merge_lastmod(_sm_existing, _scan_urls, datetime.now(timezone.utc).date().isoformat())
+            if _sm_after != (_sm_existing or ""):
+                patches.append(SeoPatch(path=_sm_path, before=_sm_existing or "", after=_sm_after, action="modify" if _sm_existing else "create", reason="sitemap (managed block)"))
 
     # ── Coalesce: same path may have been patched by multiple
     # fixers — keep only the FINAL after-state for each path so the
@@ -280,16 +272,19 @@ async def run_seo_fixes(
             user_message=options.commit_message,
             summary=options.commit_message,
         )
-        commit = await commit_files(
-            owner=owner, repo=repo, branch=branch, token=token or "",
-            files=files_to_commit,
-            commit_message=_final_msg,
-            author_name=_author_name, author_email=_author_email,
-        )
-        out["ok"] = bool(commit.get("ok"))
-        out["committed"] = True
-        out["commit_sha"] = commit.get("sha")
-        out["commit_url"] = commit.get("html_url")
+        from services.seo.kit_engine import ship_files_via_pr
+        shipped = await ship_files_via_pr(db, project=proj, token=token or "", files=files_to_commit, applied_names=["seo fix"], commit_message=_final_msg)
+        if not shipped.get("ok"):
+            out["errors"].append(f"ship via PR failed: {shipped.get('error')}")
+            out["committed"] = False
+            return out
+        out["ok"] = bool(shipped.get("ok"))
+        out["committed"] = False
+        out["pr_url"] = shipped.get("pr_url")
+        out["pr_number"] = shipped.get("pr_number")
+        out["branch"] = shipped.get("branch")
+        out["commit_sha"] = shipped.get("commit_sha")
+        out["commit_url"] = shipped.get("commit_url")
     except Exception as e:
         out["errors"].append(f"commit failed: {e!r}")
         out["committed"] = False

@@ -142,3 +142,15 @@ def allowed_modes_for_tier(tier: Optional[str]) -> list:
     """
     t = _coerce(tier)
     return TIER_LIMITS.get(t, TIER_LIMITS[Tier.FREE]).get("modes", ["swift"])
+
+# Visibility Kit pricing (Kit 2.0 P0-1) – the SINGLE source of the
+# pricing note. Every other file (routers/visibility.py,
+# services/scan_fix_quota.py, README.md) must import this, never
+# restate it. The Kit is included in the current plans, one apply
+# costs 1 task from the plan's monthly quota. No separate Kit price
+# exists. Never quote any other Kit price here.
+KIT_TASK_COST = 1
+KIT_PRICING_NOTE = (
+    "Included in your current plan — Apply uses 1 task from your "
+    "plan's monthly quota, no extra charge."
+)

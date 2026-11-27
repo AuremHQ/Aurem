@@ -97,5 +97,4 @@ def apply_managed_block(existing_content: str | None, bot_policy: dict) -> str:
         _, post = rest.split(_END, 1)
         return pre.rstrip("\n") + ("\n\n" if pre.strip() else "") + block + post.lstrip("\n")
     # No existing managed block — append ours, preserve everything else.
-    sep = "\n\n" if existing_content and not existing_content.endswith("\n\n") else ""
-    return existing_content.rstrip("\n") + "\n" + sep + block
+    return existing_content.rstrip("\n") + ("\n\n" if existing_content.strip() else "") + block
