@@ -34,6 +34,7 @@ never stubbed — only the world around it.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import inspect
 import json
 import sys
@@ -51,6 +52,33 @@ sys.path.insert(0, str(BACKEND_DIR))
 # ── Stub modules (must exist BEFORE importing routers.chat.*) ───────
 # Copied from test_audit_p0_voice_contract.py (same stub set, so both
 # files can run in one pytest process), plus the L1 call-time imports.
+def _real_or_stub(name, fake):
+    """Install `fake` for `name`, with any attribute NOT defined on
+    the fake delegating to the REAL module (same fix as
+    tests/test_part15_admin_fixes.py). The tests in this file depend
+    on the fake behaviours, so the fake must win for its defined
+    attributes; anything else falls through to the real module so
+    `from <name> import <other>` keeps working for every other test
+    file collected after this one. A plain real-first import broke
+    this file's own tests (they need the fake behaviours); a bare
+    fake broke other files' imports.
+    """
+    _real = [None]
+
+    def __getattr__(attr, _name=name, _real=_real):
+        if _real[0] is None:
+            saved = sys.modules.pop(_name, None)
+            try:
+                _real[0] = importlib.import_module(_name)
+            finally:
+                if saved is not None:
+                    sys.modules[_name] = saved
+        return getattr(_real[0], attr)
+
+    fake.__getattr__ = __getattr__
+    sys.modules[name] = fake
+
+
 def _install_stubs():
     async def _async_none(*a, **k):
         return None
@@ -60,14 +88,18 @@ def _install_stubs():
 
     # cto_services.auth: current_dev (misc.py, turn.py, stream.py)
     cto = types.ModuleType("cto_services")
-    cto.__path__ = []
-    sys.modules.setdefault("cto_services", cto)
+    # Real __path__ (not []) so the _real_or_stub __getattr__
+    # delegation can load the real cto_services.* submodule.
+    # An empty __path__ made `importlib.import_module` fail
+    # with ModuleNotFoundError when a fake submodule delegated.
+    cto.__path__ = [str(BACKEND_DIR / "cto_services")]
+    _real_or_stub("cto_services", cto)
     auth = types.ModuleType("cto_services.auth")
     auth.current_dev = _async_none
-    sys.modules.setdefault("cto_services.auth", auth)
+    _real_or_stub("cto_services.auth", auth)
     dbmod = types.ModuleType("cto_services.db")
     dbmod.get_db = lambda: None
-    sys.modules.setdefault("cto_services.db", dbmod)
+    _real_or_stub("cto_services.db", dbmod)
 
     # services.chat_helpers (misc.py / turn.py / stream.py / worker.py)
     ch = types.ModuleType("services.chat_helpers")
@@ -91,7 +123,7 @@ def _install_stubs():
     # chat_helpers at module level — the real value is 200
     # (services/chat_helpers.py:837), so the stub must provide it.
     ch.CHAT_TURNS_RETENTION = 200
-    sys.modules.setdefault("services.chat_helpers", ch)
+    _real_or_stub("services.chat_helpers", ch)
 
     # services.usage: is_founder_email (misc.py, stream.py);
     # assert_has_budget — stream.py imports it at module level
@@ -99,18 +131,18 @@ def _install_stubs():
     usage = types.ModuleType("services.usage")
     usage.is_founder_email = lambda *a, **k: False
     usage.assert_has_budget = _async_none
-    sys.modules.setdefault("services.usage", usage)
+    _real_or_stub("services.usage", usage)
 
     # services.repo_context: get_repo_context (turn.py, stream.py)
     rc = types.ModuleType("services.repo_context")
     rc.get_repo_context = _async_empty_str
-    sys.modules.setdefault("services.repo_context", rc)
+    _real_or_stub("services.repo_context", rc)
 
     # services.user_response_sanitizer (turn.py, stream.py)
     urs = types.ModuleType("services.user_response_sanitizer")
     urs.sanitize_provider_for_user = lambda s, *a, **k: s
     urs.sanitize_provenance_for_user = lambda s, *a, **k: s
-    sys.modules.setdefault("services.user_response_sanitizer", urs)
+    _real_or_stub("services.user_response_sanitizer", urs)
 
     # services.orchestrator is imported for REAL (turn.py / stream.py /
     # worker.py all do `from services.orchestrator import
@@ -125,33 +157,33 @@ def _install_stubs():
     tb.extract_tool_calls = lambda *a, **k: []
     tb.strip_tool_calls = lambda s: s
     tb.detect_unsourced_citations = lambda *a, **k: []
-    sys.modules.setdefault("services.tools_bridge", tb)
+    _real_or_stub("services.tools_bridge", tb)
     lt = types.ModuleType("services.local_tools")
     lt.TOOL_SPECS = []
     lt.invoke_local_tool = _async_none
     lt._is_safe_repo_path = lambda *a, **k: True
-    sys.modules.setdefault("services.local_tools", lt)
+    _real_or_stub("services.local_tools", lt)
     su = types.ModuleType("services.skill_usage")
     su.log_skill_use = lambda *a, **k: None
-    sys.modules.setdefault("services.skill_usage", su)
+    _real_or_stub("services.skill_usage", su)
 
     # services.subscription_tiers / loop_beta (turn.py panel fn)
     st = types.ModuleType("services.subscription_tiers")
     st.allowed_modes_for_tier = lambda tier: ["swift", "pro", "maxx"]
-    sys.modules.setdefault("services.subscription_tiers", st)
+    _real_or_stub("services.subscription_tiers", st)
     lb = types.ModuleType("services.loop_beta")
     lb.assert_maxx_daily_budget = _async_none
-    sys.modules.setdefault("services.loop_beta", lb)
+    _real_or_stub("services.loop_beta", lb)
 
     # core.task_type: infer_task_type (turn.py, stream.py, worker.py)
     ctt = types.ModuleType("core.task_type")
     ctt.infer_task_type = lambda *a, **k: None
-    sys.modules.setdefault("core.task_type", ctt)
+    _real_or_stub("core.task_type", ctt)
 
     # routers.chat package: dummy `router` (misc.py `from . import router`)
     routers_pkg = types.ModuleType("routers")
     routers_pkg.__path__ = [str(BACKEND_DIR / "routers")]
-    sys.modules.setdefault("routers", routers_pkg)
+    _real_or_stub("routers", routers_pkg)
 
     class _DummyRouter:
         def __getattr__(self, name):
@@ -164,33 +196,33 @@ def _install_stubs():
     chat_pkg = types.ModuleType("routers.chat")
     chat_pkg.__path__ = [str(BACKEND_DIR / "routers" / "chat")]
     chat_pkg.router = _DummyRouter()
-    sys.modules.setdefault("routers.chat", chat_pkg)
+    _real_or_stub("routers.chat", chat_pkg)
 
     # routers.chat.deps: get_current_user_db (misc.py)
     deps = types.ModuleType("routers.chat.deps")
     deps.get_current_user_db = _async_none
-    sys.modules.setdefault("routers.chat.deps", deps)
+    _real_or_stub("routers.chat.deps", deps)
 
     # routers.chat.handoff_guard / watchdog / retries (stream.py)
     hg = types.ModuleType("routers.chat.handoff_guard")
     hg._maybe_guard_shell_handoff_followup = _async_none
-    sys.modules.setdefault("routers.chat.handoff_guard", hg)
+    _real_or_stub("routers.chat.handoff_guard", hg)
     wd = types.ModuleType("routers.chat.watchdog")
     wd.consume_worker_queue = _async_none
-    sys.modules.setdefault("routers.chat.watchdog", wd)
+    _real_or_stub("routers.chat.watchdog", wd)
     rt = types.ModuleType("routers.chat.retries")
     rt.run_confidence_gate = _async_none
-    sys.modules.setdefault("routers.chat.retries", rt)
+    _real_or_stub("routers.chat.retries", rt)
 
     # ── L1 call-time imports (fakes; tests monkeypatch their attrs) ──
     # services.project_brain: get_brain_context (brain fetch)
     pb = types.ModuleType("services.project_brain")
     pb.get_brain_context = _async_empty_str
-    sys.modules.setdefault("services.project_brain", pb)
+    _real_or_stub("services.project_brain", pb)
     # services.pat_vault: get_repo_token_or_error (brain fetch fallback)
     pv = types.ModuleType("services.pat_vault")
     pv.get_repo_token_or_error = _async_none
-    sys.modules.setdefault("services.pat_vault", pv)
+    _real_or_stub("services.pat_vault", pv)
     # services.ora_council_retriever: get_council_few_shot (ora panel)
     ocr = types.ModuleType("services.ora_council_retriever")
 
@@ -198,7 +230,7 @@ def _install_stubs():
         return ("", 0)
 
     ocr.get_council_few_shot = _async_empty_tuple
-    sys.modules.setdefault("services.ora_council_retriever", ocr)
+    _real_or_stub("services.ora_council_retriever", ocr)
     # services.knowledge_injector: build_answer_context (ora panel)
     ki = types.ModuleType("services.knowledge_injector")
 
@@ -206,18 +238,18 @@ def _install_stubs():
         return ("", [])
 
     ki.build_answer_context = _async_empty_pair
-    sys.modules.setdefault("services.knowledge_injector", ki)
+    _real_or_stub("services.knowledge_injector", ki)
     # services.feature_flags: is_enabled (plain-English flag)
     ff = types.ModuleType("services.feature_flags")
     ff.is_enabled = _async_none
-    sys.modules.setdefault("services.feature_flags", ff)
+    _real_or_stub("services.feature_flags", ff)
     # services.house_rules: get_active_house_rules /
     # format_house_rules_block / get_active_chat_prompt (plain English)
     hr = types.ModuleType("services.house_rules")
     hr.get_active_house_rules = _async_none
     hr.format_house_rules_block = lambda s: s or ""
     hr.get_active_chat_prompt = _async_none
-    sys.modules.setdefault("services.house_rules", hr)
+    _real_or_stub("services.house_rules", hr)
 
 
 _install_stubs()

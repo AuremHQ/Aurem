@@ -31,12 +31,28 @@ def _load(name, path):
 
 
 # --- real codebase_index, registered under its real dotted path -------
+# The fake `services`/`services.ora_chat` packages carry the REAL
+# __path__ (not []) so submodule imports (services.llm, services.usage,
+# ...) still resolve to the real files. An empty __path__ shadowed the
+# real package and broke `from services.X import Y` for every other
+# test file collected after this one.
+def _real_or_stub(name, fake):
+    """Install `fake` ONLY if the real module cannot be imported
+    (same fix as tests/p1e_stubs.py)."""
+    if name in sys.modules:
+        return
+    try:
+        importlib.import_module(name)
+    except Exception:  # noqa: BLE001 — any failure means "use the stub"
+        sys.modules.setdefault(name, fake)
+
+
 services = types.ModuleType("services")
-services.__path__ = []
+services.__path__ = [str(BACKEND / "services")]
 ora_chat = types.ModuleType("services.ora_chat")
-ora_chat.__path__ = []
-sys.modules.setdefault("services", services)
-sys.modules.setdefault("services.ora_chat", ora_chat)
+ora_chat.__path__ = [str(BACKEND / "services" / "ora_chat")]
+_real_or_stub("services", services)
+_real_or_stub("services.ora_chat", ora_chat)
 codebase = _load("services.ora_chat.codebase_index",
                  BACKEND / "services" / "ora_chat" / "codebase_index.py")
 sys.modules["services.ora_chat.codebase_index"] = codebase

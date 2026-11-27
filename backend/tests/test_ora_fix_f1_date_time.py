@@ -11,6 +11,7 @@ engine.run_turn, only the DB and the provider faked.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import os
 import sys
 import types
@@ -19,13 +20,28 @@ from datetime import datetime, timezone
 import pytest
 
 # --- stub cto_services.db BEFORE importing engine (real one needs fastapi). ---
+# Real-first (same fix as tests/p1e_stubs.py): fastapi IS installed in
+# the full tree, so the real cto_services.db imports fine and the fake
+# (which only defines get_db) must not shadow it — it broke
+# `from cto_services.db import require_db/set_db` for every other
+# test file collected after this one. Any import failure falls back
+# to the fake, preserving the old behaviour for a stripped tree.
+def _real_or_stub(name, fake):
+    if name in sys.modules:
+        return
+    try:
+        importlib.import_module(name)
+    except Exception:  # noqa: BLE001 — any failure means "use the stub"
+        sys.modules.setdefault(name, fake)
+
+
 _cto = types.ModuleType("cto_services")
 _cto.__path__ = [os.path.join(os.path.dirname(__file__), "..", "cto_services")]
 _dbmod = types.ModuleType("cto_services.db")
 _dbmod.get_db = lambda: None
 _cto.db = _dbmod
-sys.modules.setdefault("cto_services", _cto)
-sys.modules.setdefault("cto_services.db", _dbmod)
+_real_or_stub("cto_services", _cto)
+_real_or_stub("cto_services.db", _dbmod)
 
 from services.ora_chat_v2 import engine  # noqa: E402
 

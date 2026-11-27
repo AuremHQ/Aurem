@@ -53,14 +53,25 @@ import pytest
 # Keep `cto_services` a real package (with __path__) so conftest's autouse
 # fixture can still `import cto_services.auth`; only `.db` is stubbed,
 # and sys.modules takes precedence over the real submodule. ---
+import importlib as _importlib
 import os as _os
 _cto = types.ModuleType("cto_services")
 _cto.__path__ = [_os.path.join(_os.path.dirname(__file__), "..", "cto_services")]
 _dbmod = types.ModuleType("cto_services.db")
 _dbmod.get_db = lambda: None
 _cto.db = _dbmod
-sys.modules.setdefault("cto_services", _cto)
-sys.modules.setdefault("cto_services.db", _dbmod)
+# Real-first (same fix as tests/p1e_stubs.py): only stub a module the
+# real tree cannot import. The old setdefault installed the fake whenever
+# the real module had not been imported yet, shadowing it for the rest
+# of the pytest process (mass collection + fixture errors in the full
+# suite). fastapi IS installed in the full-tree env now, so the real
+# cto_services.db imports fine and these stubs stay unused.
+for _name, _fake in (("cto_services", _cto), ("cto_services.db", _dbmod)):
+    if _name not in sys.modules:
+        try:
+            _importlib.import_module(_name)
+        except Exception:  # noqa: BLE001 — any failure means "use the stub"
+            sys.modules.setdefault(_name, _fake)
 
 from services.ora_chat.safety import build_runtime_context  # noqa: E402
 from services.ora_chat_v2 import engine, llm_client  # noqa: E402

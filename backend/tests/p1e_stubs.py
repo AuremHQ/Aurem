@@ -20,6 +20,7 @@ turns were created" is meaningful.
 """
 from __future__ import annotations
 
+import importlib
 import re
 import sys
 import types
@@ -30,6 +31,36 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
 _INSTALLED = False
+
+
+def _install_real_or_stub(name: str, fake: types.ModuleType) -> None:
+    """Install `fake` for `name` ONLY if the real module cannot be imported.
+
+    The old code used ``sys.modules.setdefault`` unconditionally. That only
+    protects the real module when it was ALREADY imported; when this
+    helper runs at module-import time (the four P1e test files call
+    ``install_p1e_stubs()`` at top level, i.e. during pytest collection),
+    the real modules usually have NOT been imported yet, so the fake won
+    and shadowed the real module for the rest of the pytest process.
+    That single defect was the root cause of the full suite's mass red:
+    the 58 collection ``ImportError: cannot import name ... (unknown
+    location)`` errors (fake ``services.commit_boundary`` etc. have none
+    of the real names) AND the ~9.5k setup errors from conftest's
+    autouse fixture (fake ``cto_services.auth`` has no
+    ``_legacy_admin_bypass``). Importing the real module first makes
+    ``setdefault`` a no-op whenever the real module exists, so the fake
+    only ever stands in for a genuinely missing module (the stripped
+    lane tree this helper was written for). Any import failure — not
+    just ImportError (e.g. a missing env var raising at module top) —
+    falls back to the fake, preserving the old behaviour for a
+    stripped tree.
+    """
+    if name in sys.modules:
+        return
+    try:
+        importlib.import_module(name)
+    except Exception:  # noqa: BLE001 — any failure means "use the stub"
+        sys.modules.setdefault(name, fake)
 
 
 def install_p1e_stubs() -> None:
@@ -51,16 +82,16 @@ def install_p1e_stubs() -> None:
     # `is_founder` flag the tests put on the ctx user dict.
     cto = types.ModuleType("cto_services")
     cto.__path__ = []
-    sys.modules.setdefault("cto_services", cto)
+    _install_real_or_stub("cto_services", cto)
     auth = types.ModuleType("cto_services.auth")
     auth.current_dev = _async_none
     auth.is_admin_or_founder = lambda user: bool((user or {}).get("is_founder"))
     auth.require_admin = _async_none
     auth.create_token = lambda *a, **k: ""
-    sys.modules.setdefault("cto_services.auth", auth)
+    _install_real_or_stub("cto_services.auth", auth)
     dbmod = types.ModuleType("cto_services.db")
     dbmod.get_db = lambda: None
-    sys.modules.setdefault("cto_services.db", dbmod)
+    _install_real_or_stub("cto_services.db", dbmod)
 
     # ── services.llm (orchestrator.py, chat_helpers.py): only the two
     # names imported at module top. No test here calls the LLM.
@@ -71,13 +102,13 @@ def install_p1e_stubs() -> None:
 
     llm.call_llm_with_meta = _fake_call_llm
     llm.cap_for = lambda mode: 4000
-    sys.modules.setdefault("services.llm", llm)
+    _install_real_or_stub("services.llm", llm)
 
     # ── services.identity (orchestrator.py)
     ident = types.ModuleType("services.identity")
     ident.OR_IDENTITY = "ORA"
     ident.PRODUCT_IDENTITY = "Aurem"
-    sys.modules.setdefault("services.identity", ident)
+    _install_real_or_stub("services.identity", ident)
 
     # ── services.tools_bridge (orchestrator.py)
     tb = types.ModuleType("services.tools_bridge")
@@ -86,7 +117,7 @@ def install_p1e_stubs() -> None:
     tb.extract_tool_calls = lambda *a, **k: []
     tb.strip_tool_calls = lambda s: s
     tb.detect_unsourced_citations = lambda *a, **k: []
-    sys.modules.setdefault("services.tools_bridge", tb)
+    _install_real_or_stub("services.tools_bridge", tb)
 
     # ── services.local_tools (orchestrator.py): faithful copy of the
     # real _is_safe_repo_path charset rule (letters, digits, space,
@@ -103,30 +134,30 @@ def install_p1e_stubs() -> None:
         return not _UNSAFE.search(path)
 
     lt._is_safe_repo_path = _is_safe_repo_path
-    sys.modules.setdefault("services.local_tools", lt)
+    _install_real_or_stub("services.local_tools", lt)
 
     # ── services.skill_usage (orchestrator.py)
     su = types.ModuleType("services.skill_usage")
     su.log_skill_use = lambda *a, **k: None
-    sys.modules.setdefault("services.skill_usage", su)
+    _install_real_or_stub("services.skill_usage", su)
 
     # ── services.interaction_contract / session_summary /
     # commit_boundary (chat_helpers._persist_turn lazy imports)
     ic = types.ModuleType("services.interaction_contract")
     ic.finalize = lambda *a, **k: {}
     ic.new_request_id = lambda: "test-request-id"
-    sys.modules.setdefault("services.interaction_contract", ic)
+    _install_real_or_stub("services.interaction_contract", ic)
     ss = types.ModuleType("services.session_summary")
     ss.maybe_update_summary = _async_none
-    sys.modules.setdefault("services.session_summary", ss)
+    _install_real_or_stub("services.session_summary", ss)
     cb = types.ModuleType("services.commit_boundary")
     cb.propose_from_turn = _async_none
-    sys.modules.setdefault("services.commit_boundary", cb)
+    _install_real_or_stub("services.commit_boundary", cb)
 
     # ── services.usage: is_founder_email (misc.py)
     usage = types.ModuleType("services.usage")
     usage.is_founder_email = lambda *a, **k: False
-    sys.modules.setdefault("services.usage", usage)
+    _install_real_or_stub("services.usage", usage)
 
     # ── services.ora_chat.codebase_index (slash_commands.py): the
     # repo-read handlers are not under test here; the fake answers
@@ -138,7 +169,7 @@ def install_p1e_stubs() -> None:
     ci.find_files = _async_none
     ci.read_file = _async_none
     ci.search_defs = _async_none
-    sys.modules.setdefault("services.ora_chat.codebase_index", ci)
+    _install_real_or_stub("services.ora_chat.codebase_index", ci)
 
     # ── routers.chat package: dummy `router` (misc.py
     # `from . import router`) so importing routers.chat.misc does NOT
@@ -146,7 +177,7 @@ def install_p1e_stubs() -> None:
     # history — not seeded in this lane).
     routers_pkg = types.ModuleType("routers")
     routers_pkg.__path__ = [str(BACKEND_DIR / "routers")]
-    sys.modules.setdefault("routers", routers_pkg)
+    _install_real_or_stub("routers", routers_pkg)
 
     class _DummyRouter:
         def __getattr__(self, name):
@@ -159,12 +190,12 @@ def install_p1e_stubs() -> None:
     chat_pkg = types.ModuleType("routers.chat")
     chat_pkg.__path__ = [str(BACKEND_DIR / "routers" / "chat")]
     chat_pkg.router = _DummyRouter()
-    sys.modules.setdefault("routers.chat", chat_pkg)
+    _install_real_or_stub("routers.chat", chat_pkg)
 
     # ── routers.chat.deps: get_current_user_db (misc.py)
     deps = types.ModuleType("routers.chat.deps")
     deps.get_current_user_db = _async_none
-    sys.modules.setdefault("routers.chat.deps", deps)
+    _install_real_or_stub("routers.chat.deps", deps)
 
 
 # ── Fake Mongo ───────────────────────────────────────────────────────
