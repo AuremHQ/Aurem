@@ -45,6 +45,27 @@ def _stub(name, **attrs):
     mod = types.ModuleType(name)
     for k, v in attrs.items():
         setattr(mod, k, v)
+    # Delegate any other attribute to the REAL module so `from <name>
+    # import <other>` keeps working for every other test file
+    # collected after this one (same fix as tests/p1e_stubs.py).
+    # The old bare fake for services.llm (only call_llm_with_meta)
+    # broke `from services.llm import cap_for/_GLM_MODEL` for later
+    # files. Defined attributes win, so this file's own tests still
+    # see the fakes.
+    _real = [None]
+
+    def __getattr__(attr, _name=name, _real=_real):
+        if _real[0] is None:
+            import importlib
+            saved = sys.modules.pop(_name, None)
+            try:
+                _real[0] = importlib.import_module(_name)
+            finally:
+                if saved is not None:
+                    sys.modules[_name] = saved
+        return getattr(_real[0], attr)
+
+    mod.__getattr__ = __getattr__
     sys.modules[name] = mod
     return mod
 

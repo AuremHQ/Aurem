@@ -254,9 +254,10 @@ async def _call_llm_with_meta_impl(system: str, user: str,
                 {"user_id": user_id},
                 {"tier": 1, "is_unlimited": 1, "email": 1},
             )
-            _is_founder = bool(
-                _u
-                and (
+            _is_founder = (
+                None
+                if _u is None
+                else bool(
                     _u.get("tier") == "founder"
                     or _u.get("is_unlimited")
                     or _is_founder_email(_u.get("email"))

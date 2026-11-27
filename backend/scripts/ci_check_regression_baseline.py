@@ -85,6 +85,7 @@ def _parse_current_counts(pytest_output_path: str) -> dict[str, int]:
     # matches this shape (earlier lines can contain similarly-worded
     # text inside tracebacks/test names).
     counts = {"failed": 0, "passed": 0, "errors": 0}
+    found_summary = False
     for line in reversed(text.splitlines()):
         matches = _SUMMARY_RE.findall(line)
         if not matches:
@@ -92,6 +93,7 @@ def _parse_current_counts(pytest_output_path: str) -> dict[str, int]:
         # A real summary line has at least "in <seconds>s" after it,
         # or ends the run — accept the first (from the end) line with
         # >=1 category match as the summary.
+        found_summary = True
         for num, label in matches:
             n = int(num)
             if label == "failed":
@@ -101,6 +103,18 @@ def _parse_current_counts(pytest_output_path: str) -> dict[str, int]:
             elif label in ("error", "errors"):
                 counts["errors"] = n
         break
+    if not found_summary:
+        # 2026-11-26 (CI-unblock, pytest-must-fix) — a missing summary
+        # line means pytest crashed or never ran. The old code returned
+        # 0/0/0 here, which PASSED the baseline lock on a crashed run.
+        # Fail hard (exit 2) so a pytest crash still reds the job.
+        print(
+            f"::error::no pytest summary line found in {pytest_output_path} "
+            "— pytest may have crashed before finishing (or the run was "
+            "skipped). Failing the baseline lock so the job goes red.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     return counts
 
 

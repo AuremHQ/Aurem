@@ -54,8 +54,14 @@ jobs:
               env.write(f'MONGO_URL=mongodb://127.0.0.1:{port}\nDB_NAME=interaction_ci\n')
               env.write(f'JWT_SECRET={secrets.token_urlsafe(48)}\n')
           PY
-      - name: Blocking interaction contract gate
-        run: bash scripts/interaction_gate.sh
+      - name: Blocking interaction contract gate (backend)
+        run: bash scripts/interaction_gate.sh --backend-only
+      - name: Blocking interaction contract gate (frontend)
+        # Runs even when the backend half fails, so vitest evidence is
+        # still produced — the job still fails on the backend step, so
+        # the gate stays blocking.
+        if: always()
+        run: bash scripts/interaction_gate.sh --frontend-only
       - name: Upload evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
