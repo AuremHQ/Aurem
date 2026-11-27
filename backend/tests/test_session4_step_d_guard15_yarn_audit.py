@@ -53,7 +53,7 @@ def test_g15_docstring_no_longer_lies():
     assert "pip-audit" in top_docstring
     assert "yarn" in top_docstring
     assert "yarn.lock" in top_docstring, \
-        "        "docstring must mention what yarn scans"
+        "docstring must mention what yarn scans"
 
 
 # 2b) pip severity is UNKNOWN, not silently dropped (2026-11-26)
@@ -74,7 +74,7 @@ def test_g15_pip_severity_unknown_is_surfaced_not_silent():
     assert "unknown_severity" in src, \
         "unknown-severity count must be persisted"
     assert "WARN" in src and "pip-audit emits none" in src, \
-        "must warn that pip-audit emits no severity""
+        "must warn that pip-audit emits no severity"
 
 
 # ═════════════════════════════════════════════════════════════════
