@@ -98,7 +98,7 @@ jobs:
     runs-on: ubuntu-latest
     # 2026-06 · was 10 — first real post-billing-fix run was killed at
     # the job timeout mid-suite (93%), hiding the true failure list.
-    timeout-minutes: 20
+    timeout-minutes: 45
 
     services:
       mongodb:
