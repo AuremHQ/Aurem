@@ -288,7 +288,7 @@ async def scan(
     for cat in categories:
         # 2026-10-10 fix — root cause of the reported Cloudflare 520
         # ("invalid or incomplete response") on "Run all scanners":
-        # every SCANNERS[cat] (Vanguard's 25-pattern regex catalog,
+        # every SCANNERS[cat] (Vanguard's 56-pattern regex catalog,
         # Bug Hunt's 50+ rules, the Docker CIS checks, etc.) is a
         # plain synchronous function doing pure CPU-bound regex work
         # over the WHOLE repo's text_cache — calling it directly here

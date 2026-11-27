@@ -45,6 +45,18 @@ def _load_vanguard(monkeypatch):
     scanner.scan_file_blocks = lambda blocks: []
     scanner.has_critical = lambda findings: any(
         (f or {}).get("severity") == "CRITICAL" for f in (findings or []))
+    # 2026-11-27 Vanguard 28 — verify_agent imports LOW_SECRET_IDS +
+    # ALL_RULE_IDS from the scanner at module load, so the stub must
+    # carry them. Values are copied from the REAL scanner file (light,
+    # side-effect-free) so _apply_level_scope behaves identically if
+    # a test ever runs at LOW — never hand-maintain a second copy.
+    _real_spec = importlib.util.spec_from_file_location(
+        "_vanguard_scanner_real", _SERVICES_DIR / "vanguard_scanner.py")
+    assert _real_spec is not None and _real_spec.loader is not None
+    _real_scanner = importlib.util.module_from_spec(_real_spec)
+    _real_spec.loader.exec_module(_real_scanner)
+    scanner.LOW_SECRET_IDS = _real_scanner.LOW_SECRET_IDS
+    scanner.ALL_RULE_IDS = _real_scanner.ALL_RULE_IDS
     monkeypatch.setitem(sys.modules, "services.vanguard_scanner", scanner)
 
     llm_pkg = types.ModuleType("services.llm")

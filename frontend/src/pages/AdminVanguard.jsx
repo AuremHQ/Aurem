@@ -45,6 +45,7 @@ function AdminVanguardInner() {
   const nav = useNavigate();
   const [stats,  setStats]  = useState(null);
   const [recent, setRecent] = useState([]);
+  const [counts, setCounts] = useState(null);
   const [days,   setDays]   = useState(7);
   const [busy,   setBusy]   = useState(false);
   const [err,    setErr]    = useState("");
@@ -52,12 +53,14 @@ function AdminVanguardInner() {
   const load = useCallback(async () => {
     setBusy(true); setErr("");
     try {
-      const [s, r] = await Promise.all([
+      const [s, r, c] = await Promise.all([
         api.get(`/admin/vanguard/stats?days=${days}`),
         api.get(`/admin/vanguard/recent?limit=25`),
+        api.get(`/admin/vanguard/config`),
       ]);
       setStats(s.data);
       setRecent(r.data?.rows || []);
+      setCounts(c.data?.config?.pattern_counts || null);
     } catch (e) {
       const status = e?.response?.status;
       setErr(e?.response?.data?.detail || e?.message || String(e));
@@ -91,6 +94,16 @@ function AdminVanguardInner() {
                         letterSpacing: "0.16em" }}>🛡️ VANGUARD AUDIT</div>
           <h1 style={{ margin: "4px 0 0", fontSize: 26, fontWeight: 600,
                        letterSpacing: "-0.02em" }}>Blocked Commits</h1>
+          {counts && (
+            <div data-testid="vanguard-catalog-counts"
+                 style={{ marginTop: 6, fontSize: 11,
+                         color: "var(--text-dim, #9aa3b2)",
+                         fontFamily: "'JetBrains Mono', monospace" }}>
+              Catalog: {counts.total_r1} R1 patterns ({counts.secrets} secrets
+              {" "}+ {counts.dangerous} dangerous) · {counts.deep} deep ·{" "}
+              {counts.chains} chains
+            </div>
+          )}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {[1, 7, 30, 90].map(d => (

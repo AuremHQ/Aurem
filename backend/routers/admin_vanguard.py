@@ -6,9 +6,10 @@ Two endpoints, both admin/founder-gated:
   GET  /admin/vanguard/config  →  current { enabled, levels, updated_at, updated_by }
   POST /admin/vanguard/config  →  upsert  { enabled, levels }
 
-The body's `levels` key MUST be a dict of `{swift|pro|maxx: OFF|CRITICAL|HIGH}`.
-Unknown modes are ignored; unknown levels coerce to the safest default
-(CRITICAL) by the service layer.
+The body's `levels` key MUST be a dict of `{swift|pro|maxx: OFF|LOW|MEDIUM|HIGH}`.
+Legacy levels (CRITICAL/HIGH) are accepted and normalised by the
+service layer (CRITICAL → LOW, HIGH → MEDIUM). Unknown modes are
+ignored; unknown levels coerce to the mode default by the service layer.
 
 The frontend at `/admin/vanguard` calls these to drive the three radio
 pills + global master switch.
@@ -22,6 +23,7 @@ from cto_services.auth import require_admin_dep, current_dev, _finish_admin_chec
 from pydantic import BaseModel
 
 from services.vanguard_config import get_config, save_config
+from services.vanguard_scanner import pattern_counts
 
 router = APIRouter(prefix="/admin/vanguard", tags=["Admin / Vanguard"],
                    dependencies=[Depends(require_admin_dep)])  # Iter 358 router-level gate
@@ -47,12 +49,15 @@ async def read_vanguard_config(
     ts = cfg.get("updated_at")
     if hasattr(ts, "isoformat"):
         cfg["updated_at"] = ts.isoformat()
+    # 2026-11-27 — live catalog counts for the admin badge (single
+    # source of truth; the UI never hard-codes a pattern count).
+    cfg["pattern_counts"] = pattern_counts()
     return {"ok": True, "config": cfg}
 
 
 class _ConfigBody(BaseModel):
     enabled: bool
-    levels:  dict  # {swift|pro|maxx: OFF|CRITICAL|HIGH}
+    levels:  dict  # {swift|pro|maxx: OFF|LOW|MEDIUM|HIGH}
 
 
 @router.post("/config")
@@ -70,4 +75,5 @@ async def write_vanguard_config(
     ts = saved.get("updated_at")
     if hasattr(ts, "isoformat"):
         saved["updated_at"] = ts.isoformat()
+    saved["pattern_counts"] = pattern_counts()
     return {"ok": True, "config": saved}

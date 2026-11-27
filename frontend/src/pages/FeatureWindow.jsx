@@ -350,7 +350,7 @@ function VanguardBadge({ label, tone = "info" }) {
 
 function VanguardPanel({ v }) {
   // Iter 212m-66 — render the new two-round + AI remediation badges
-  // when the backend exposes them. Existing 25-pattern stats stay
+  // when the backend exposes them. Existing pattern stats stay
   // exactly where they were so legacy UI users see no shift.
   const t = v.two_round_budget || {};
   return (

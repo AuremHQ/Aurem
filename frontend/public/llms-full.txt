@@ -7,7 +7,7 @@
 
 ORA by Aurem is an autonomous AI software engineer. It connects
 to a developer's GitHub repository, reads the codebase, plans the
-change, writes production-ready code, runs a 25-pattern pre-commit
+change, writes production-ready code, runs a 56-pattern pre-commit
 security scan (Vanguard) plus an optional two-round deep scan with
 AI-generated remediation report, and ships the change directly to
 the branch — or opens a draft Pull Request if the team prefers
@@ -54,7 +54,7 @@ Tagline: "The AI engineer that actually commits."
   (Full Scan costs only one repo walk)
 - 0-100 health score per category + combined overall score with
   urgency labels (CRITICAL RISK / NEEDS ATTENTION / GOOD / HEALTHY)
-- Category 1 Security — Vanguard's 25-pattern catalogue applied
+- Category 1 Security — Vanguard's 56-pattern catalogue applied
   across the whole repo
 - Category 2 Performance — unbounded .to_list(None), high-cap
   .to_list(>1000), find_one without projection, N+1 query loop

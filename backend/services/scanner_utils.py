@@ -33,6 +33,11 @@ _SCANNER_RULE_FILES: tuple[str, ...] = (
     "services/bug_hunt_rules.py",
     "services/vanguard_scanner.py",
     "services/vanguard_verify_agent.py",
+    # 2026-11-27 Vanguard 28 — the text scanner is now a thin adapter
+    # over the vanguard catalog; its docstrings/comments spell out the
+    # legacy rule ids + dangerous patterns it translates, which the
+    # regexes would otherwise flag as live code.
+    "services/security_text_scanner.py",
     "services/generation_rules.py",
     "services/mode_e_auditor.py",
     "services/full_scan_scanners.py",

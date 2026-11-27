@@ -76,8 +76,61 @@ _SECRET_PATTERN_DEFS = [
      r"""SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}""",
      "CRITICAL"),
     ("openai_key",
-     r"""sk-(?!aurem[-_])(?!test[-_])[A-Za-z0-9]{20,}""",
+     # 2026-11-27 Vanguard 28 — exclude the vendor-prefixed siblings
+     # (sk-ant- / sk-proj- / sk-or-) so their own rules own those
+     # lines; without the lookaheads a dash-less future format would
+     # double-fire both rules on the same line.
+     r"""sk-(?!aurem[-_])(?!test[-_])(?!ant[-_])(?!proj[-_])(?!or[-_])[A-Za-z0-9]{20,}""",
      "CRITICAL"),
+    # ── 2026-11-27 Vanguard 28 — modern provider keys (Gitleaks/OWASP
+    # set from the audit). Each has a vendor-distinct prefix so the
+    # generic rules never double-fire. Deliberately NOT added:
+    # google_aiza (⊂ google_api_key), openssh_pem (⊂ private_key —
+    # header-only would reintroduce the iter 212m-224 FP),
+    # db_url_password (⊂ db_connection_string), stripe_rk
+    # (stripe_live_key already matches rk_live_).
+    ("anthropic_key",
+     r"""sk-ant-api03-[A-Za-z0-9_-]{20,}""",
+     "CRITICAL"),
+    ("openai_project",
+     r"""sk-proj-[A-Za-z0-9_-]{20,}""",
+     "CRITICAL"),
+    ("openrouter_key",
+     r"""sk-or-v1-[A-Za-z0-9]{20,}""",
+     "CRITICAL"),
+    ("groq_key",
+     r"""gsk_[A-Za-z0-9]{20,}""",
+     "CRITICAL"),
+    ("xai_key",
+     r"""xai-[A-Za-z0-9]{20,}""",
+     "CRITICAL"),
+    ("huggingface",
+     r"""hf_[A-Za-z0-9]{20,}""",
+     "CRITICAL"),
+    ("telegram_bot",
+     r"""\b\d{8,10}:[A-Za-z0-9_-]{35}\b""",
+     "CRITICAL"),
+    ("discord_bot",
+     r"""[A-Za-z0-9_-]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}""",
+     "CRITICAL"),
+    ("npm_token",
+     r"""npm_[A-Za-z0-9]{36}""",
+     "CRITICAL"),
+    ("pypi_token",
+     r"""pypi-[A-Za-z0-9_-]{20,}""",
+     "CRITICAL"),
+    ("stripe_whsec",
+     r"""whsec_[A-Za-z0-9]{20,}""",
+     "CRITICAL"),
+    ("twilio_sid_key",
+     r"""\bSK[0-9a-fA-F]{32}\b""",
+     "CRITICAL"),
+    ("resend_key",
+     r"""re_[A-Za-z0-9]{20,}""",
+     "CRITICAL"),
+    ("jwt_compact",
+     r"""\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b""",
+     "HIGH"),
 ]
 
 SECRET_PATTERNS = [
@@ -110,11 +163,158 @@ _DANGEROUS_PATTERN_DEFS = [
     ("sql_string_format",     r"""(?i)(?:execute|cursor\.execute)\s*\(\s*[f'\"]+.*\{""", "CRITICAL"),
     ("innerHTML_assignment",  r"""\.innerHTML\s*=""",                                   "HIGH"),
     ("dangerously_set_html",  r"""dangerouslySetInnerHTML""",                           "HIGH"),
+    # ── 2026-11-27 Vanguard 28 — OWASP dangerous-code set. Deliberately
+    # NOT added: next_ds_html (⊂ dangerously_set_html — Next.js uses
+    # the same prop). All of these are code-only rules (see
+    # _CODE_ONLY_RULES in scan_text) so docs/prose never fires them.
+    # graphql_no_depth / express_no_limit use a negative lookahead:
+    # they fire only when the setup line does NOT mention the guard —
+    # single-line setups only; multi-line config is out of regex scope.
+    ("ssrf_user_url",
+     r"""(?:requests|httpx)\.(?:get|post|put|delete|patch|request)\s*\(\s*(?:f["']|\w*url|url|user_input|user_url)|urllib\.request\.urlopen\s*\(\s*(?:f["']|\w*url|url|user_input)|(?:fetch|axios\.(?:get|post))\s*\(\s*(?:f["'`]|\w*url|url|user_input)""",
+     "HIGH"),
+    ("xxe_xml_parse",
+     r"""(?:xml\.etree\.ElementTree|lxml\.etree|ElementTree|\bET)\.(?:parse|fromstring)\s*\(""",
+     "HIGH"),
+    ("unsafe_redirect",
+     r"""(?i)(?:redirect|HttpResponseRedirect)\s*\(\s*(?:request\.|user_|next\b|url\b)""",
+     "MEDIUM"),
+    ("cors_star",
+     r"""(?i)(?:allow_origins\s*=\s*\[\s*["']\*["']|Access-Control-Allow-Origin["']?\s*[:=]\s*["']\*["']|CORS_ALLOW_ALL_ORIGINS\s*=\s*True)""",
+     "HIGH"),
+    ("debug_true",
+     r"""(?i)(?:DEBUG\s*=\s*True|debug\s*=\s*True)""",
+     "MEDIUM"),
+    ("jwt_alg_none",
+     r"""(?i)algorithms?\s*=\s*\[\s*["']none["']""",
+     "CRITICAL"),
+    ("crypto_md5_pass",
+     r"""(?i)hashlib\.md5\s*\([^)]*\b(?:password|passwd|pwd)\b""",
+     "HIGH"),
+    ("django_raw",
+     r"""(?i)(?:\.raw\s*\(|\.extra\s*\(|RawSQL\s*\()""",
+     "HIGH"),
+    ("command_popen",
+     r"""\bos\.popen\s*\(""",
+     "HIGH"),
+    ("child_exec",
+     r"""\bchild_process\.(?:exec|execSync|spawn|spawnSync|execFile)\s*\(""",
+     "HIGH"),
+    ("graphql_no_depth",
+     r"""(?i)(?!.*\bdepth\b)(?:graphqlHTTP|ApolloServer)\s*\(""",
+     "MEDIUM"),
+    ("express_no_limit",
+     r"""(?i)(?!.*\blimit\b)express\s*\.\s*(?:json|urlencoded)\s*\(\s*\)""",
+     "MEDIUM"),
+    ("path_traversal",
+     r"""(?i)(?:open|send_file|send_from_directory)\s*\([^)]*(?:request\.|params|query|user_input|filename|\.\./)""",
+     "HIGH"),
+    ("cloud_metadata_ip",
+     r"""169\.254\.169\.254""",
+     "CRITICAL"),
 ]
 
 DANGEROUS_PATTERNS = [
     (name, re.compile(p), sev) for name, p, sev in _DANGEROUS_PATTERN_DEFS
 ]
+
+
+# ─── 2026-11-27 Vanguard 28 — catalog introspection + FP helpers ─────
+# Generic/shape-based secret rules (match on the KEY NAME + a quoted
+# value). These are the rules the os.environ/process.env skip and the
+# placeholder-value downgrade apply to. Vendor-shaped rules match on
+# the VALUE's shape (AKIA…, sk-ant-…, …) and are never downgraded.
+_GENERIC_SECRET_RULES: frozenset[str] = frozenset({
+    "generic_api_key", "aws_secret_key", "password_assignment",
+    "token_assignment", "generic_secret", "db_connection_string",
+})
+_PLACEHOLDER_DOWNGRADE_RULES: frozenset[str] = frozenset({
+    "generic_api_key", "password_assignment", "token_assignment",
+    "generic_secret",
+})
+_PLACEHOLDER_VALUES: frozenset[str] = frozenset({
+    "test", "test123", "test1234", "testing", "demo", "example",
+    "changeme", "change-me", "password", "password123", "123456",
+    "12345678", "placeholder", "sample", "dummy", "xxx", "xxxx",
+    "your-secret-here", "your_api_key_here", "todo", "none", "null",
+})
+_PLACEHOLDER_PREFIXES: tuple[str, ...] = (
+    "test", "demo", "example", "changeme", "placeholder", "xxx",
+    "sample", "dummy",
+)
+
+
+def _quoted_value(matched: str) -> str | None:
+    """Pull the quoted literal out of a secret-rule match, if any."""
+    m = re.search(r"""['"]([^'"]+)['"]""", matched or "")
+    return m.group(1) if m else None
+
+
+def _is_placeholder_value(value: str) -> bool:
+    v = (value or "").strip().lower()
+    if v in _PLACEHOLDER_VALUES:
+        return True
+    return any(v.startswith(p) for p in _PLACEHOLDER_PREFIXES)
+
+
+# LOW level = vendor-shaped secret rules only (a secret whose VALUE
+# shape proves it is a real credential — AKIA…, sk-ant-…, …). Generic
+# rules are excluded: their key-name+quoted-value shape is exactly
+# the class that false-positives on config/demo code.
+LOW_SECRET_IDS: frozenset[str] = frozenset({
+    "aws_access_key", "private_key", "github_token", "slack_token",
+    "stripe_live_key", "google_api_key", "sendgrid_key", "openai_key",
+    "anthropic_key", "openai_project", "openrouter_key", "groq_key",
+    "xai_key", "huggingface", "telegram_bot", "discord_bot", "npm_token",
+    "pypi_token", "stripe_whsec", "twilio_sid_key", "resend_key",
+})
+# Deep-round vendor secrets — same shapes, matched on full-file text.
+DEEP_VENDOR_SECRET_IDS: frozenset[str] = frozenset({
+    "secret_aws_access_key_deep", "secret_openai_key_deep",
+    "secret_github_pat_deep", "secret_stripe_live_deep",
+})
+# Vendor-shaped secrets — real credential shapes that are a leak
+# wherever they appear, including test/fixture/demo files. Exempt
+# from the demo-path downgrade (a real AKIA key in a test file is
+# still a real key in the repo).
+VENDOR_SECRET_IDS: frozenset[str] = LOW_SECRET_IDS | DEEP_VENDOR_SECRET_IDS
+
+# Markers proving a file mounts a body-size limit (LPDoS defence).
+# When any is present, the lpdos rule does not fire for that file.
+_BODY_LIMIT_MARKERS: tuple[str, ...] = (
+    "ContentSizeLimit", "max_content_length", "MAX_CONTENT_LENGTH",
+    "request_body_size", "body_size_limit", "limit_request_body",
+)
+
+
+def _file_has_body_limit(text: str) -> bool:
+    if not text:
+        return False
+    if any(mk in text for mk in _BODY_LIMIT_MARKERS):
+        return True
+    # FastAPI per-field cap: Body(..., max_length=N) is not a body
+    # limit, but a file that caps every body field is not the LPDoS
+    # shape this rule hunts — treat it as a limit signal too.
+    return "Body(" in text and "max_length" in text
+
+
+def pattern_counts() -> dict:
+    """Live catalog counts — the single source of truth for every
+    "N-pattern" string in the codebase (README, UI badges, API
+    responses, tests). Never hard-code a count elsewhere; call this.
+
+    R1 = secrets + dangerous (the surface sweep). Deep (13) and
+    chains are reported separately — deep rules are not R1 rules.
+    """
+    secrets = len(_SECRET_PATTERN_DEFS)
+    dangerous = len(_DANGEROUS_PATTERN_DEFS)
+    return {
+        "secrets":   secrets,
+        "dangerous": dangerous,
+        "deep":      len(_DEEP_PATTERN_DEFS),
+        "chains":    len(_CHAIN_DEFS),
+        "total_r1":  secrets + dangerous,
+    }
 
 
 # ─── Public API ─────────────────────────────────────────────────────────
@@ -168,6 +368,13 @@ def scan_text(
         "os_system", "pickle_loads", "yaml_unsafe_load",
         "sql_string_format",
         "innerHTML_assignment", "dangerously_set_html",
+        # 2026-11-27 Vanguard 28 — every new dangerous rule is code-only
+        # too (SSRF/XSS/config shapes in prose/docs are not findings).
+        "ssrf_user_url", "xxe_xml_parse", "unsafe_redirect",
+        "cors_star", "debug_true", "jwt_alg_none", "crypto_md5_pass",
+        "django_raw", "command_popen", "child_exec",
+        "graphql_no_depth", "express_no_limit", "path_traversal",
+        "cloud_metadata_ip",
     }
     _is_code_ext = filepath.endswith(
         (".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rb",
@@ -208,14 +415,39 @@ def scan_text(
         for i, line in enumerate(lines, 1):
             if _SUPPRESS_MARKER in line:
                 continue
-            if pattern.search(line):
+            # 2026-11-27 Vanguard 28 — env lookups are not hardcoded
+            # secrets. (The regexes already resist this FP class — they
+            # need a quoted literal right after `=` — but the skip is
+            # belt-and-braces for future regex loosening.) Applies to
+            # the generic/shape rules only; vendor-shaped rules match
+            # on the VALUE's shape, so a literal on the line is a real
+            # secret even next to an env call.
+            if name in _GENERIC_SECRET_RULES and (
+                "os.environ" in line or "process.env" in line
+            ):
+                continue
+            m = pattern.search(line)
+            if m:
+                sev = severity
+                extra: dict = {}
+                # 2026-11-27 — placeholder values (test123, changeme,
+                # ...) on the generic/shape rules are INFO, not a
+                # block. Vendor-shaped rules stay CRITICAL even in
+                # tests/fixtures — a real AKIA/sk-ant- is a real leak.
+                if name in _PLACEHOLDER_DOWNGRADE_RULES:
+                    val = _quoted_value(m.group(0))
+                    if val is not None and _is_placeholder_value(val):
+                        sev = "INFO"
+                        extra = {"downgraded": True,
+                                 "downgrade_reason": "placeholder value"}
                 findings.append({
                     "name": name,
-                    "severity": severity,
+                    "severity": sev,
                     "filepath": filepath,
                     "line": i,
                     "snippet": redact_secrets_in_text(line.strip()[:120]),
                     "source": "vanguard_007_secrets",
+                    **extra,
                 })
                 break
     if include_dangerous:
@@ -251,6 +483,10 @@ def scan_text(
         for name, pattern, severity in DANGEROUS_PATTERNS:
             # Iter 212m-226 — Code-only rules must skip non-code files.
             if not _is_code_ext and name in _CODE_ONLY_RULES:
+                continue
+            # 2026-11-27 — defusedxml IS the XXE fix; a file that
+            # imports it has already mitigated the rule.
+            if name == "xxe_xml_parse" and "defusedxml" in text:
                 continue
             for i, line in enumerate(lines, 1):
                 if _SUPPRESS_MARKER in line:
@@ -313,9 +549,14 @@ def scan_file_blocks(blocks: dict[str, str]) -> list[dict]:
         # tokens in tests). Downgrade CRITICAL → INFO on these paths so
         # the commit isn't blocked, but the finding still surfaces in
         # the report for review.
+        # 2026-11-27 — vendor-shaped secrets are exempt from the demo
+        # downgrade: a real credential shape in a test file is still a
+        # real leak in the repo. Generic/dangerous findings still
+        # downgrade (placeholder secrets, eval() in test harnesses).
         if _is_safe_demo_path(path):
             for f in findings:
-                if f.get("severity") in ("CRITICAL", "HIGH"):
+                if (f.get("severity") in ("CRITICAL", "HIGH")
+                        and f.get("name") not in VENDOR_SECRET_IDS):
                     f["severity"]     = "INFO"
                     f["downgraded"]   = True
                     f["downgrade_reason"] = "demo/test/example file"
@@ -398,20 +639,25 @@ def has_critical_or_high(findings: Iterable[dict]) -> bool:
 
 # ─── Iter 212m-66 — Multi-round deep-scan engine ────────────────────────
 # Two-round scanner used by the /security-scan/run endpoint when the
-# caller opts in with `two_round: true`.  Round 1 runs the existing
-# 25-pattern catalog over every file (fast surface sweep).  Round 2
-# re-scans ONLY the files that surfaced critical/high findings in
-# Round 1 using a deeper rule set (13 extra rules + ±10-line context
-# capture + chained-vulnerability detection that escalates compound
-# risks like `sql_string_format + requests_no_verify` in the same
-# file to CRITICAL).
+# caller opts in with `two_round: true`.  Round 1 runs the full R1
+# catalog (see pattern_counts() — 28 at audit time, 56 after the
+# 2026-11-27 provider/OWASP additions) over every file (fast surface
+# sweep).  Round 2 re-scans the files that surfaced MEDIUM+ findings
+# in Round 1 using a deeper rule set (13 extra rules + ±10-line
+# context capture + chained-vulnerability detection that escalates
+# compound risks like `sql_string_format + requests_no_verify` in the
+# same file to CRITICAL).
 #
 # Pure stdlib — no external deps, no LLM cost.  The two budgets are
 # enforced via `time.monotonic()` so a pathological repo can never
 # wedge the request loop:
-#     ROUND 1 ≤ 10 s   ROUND 2 ≤ 20 s   (combined cap policed at the
-#     caller in security_scan.py — 30 s total).
+#     ROUND 1 ≤ 15 s   ROUND 2 ≤ 25 s   (combined cap policed at the
+#     caller in security_scan.py — 40 s total).
 import time as _time
+
+# 2026-11-27 Vanguard 28 — max R2 hits per rule per file (was 1 via
+# `break`; lpdos is capped at 1 separately — it is file-level).
+_R2_MAX_HITS_PER_RULE = 3
 
 # Deep-scan rule set — mirrors the 13 rules defined in
 # routers/security_scan.py but re-anchored for line-by-line text
@@ -508,7 +754,38 @@ _CHAIN_DEFS: list[dict] = [
         "desc":     "Unsafe HTML sink + eval — DOM XSS to RCE pivot "
                     "if user input ever lands in either",
     },
+    # 2026-11-27 Vanguard 28 — new chains over the new dangerous rules.
+    {
+        "id":       "chain_ssrf_plus_metadata",
+        "requires": {"ssrf_user_url", "cloud_metadata_ip"},
+        "min_match": 2,
+        "severity": "CRITICAL",
+        "desc":     "User-controlled outbound URL + cloud metadata IP "
+                    "in the same file — SSRF to credential theft",
+    },
+    {
+        "id":       "chain_path_traversal_plus_delete",
+        "requires": {"path_traversal", "shutil_rmtree", "os_remove",
+                     "os_unlink"},
+        "min_match": 2,
+        "severity": "CRITICAL",
+        "desc":     "User-controlled file path + file-deletion call — "
+                    "arbitrary file deletion via traversal",
+    },
 ]
+
+
+# Every rule id the scanner can emit (R1 + deep + chains + the AST
+# syntax-error pseudo-rule). The LOW level filter uses it fail-closed:
+# a finding whose rule is NOT in this set (e.g. a test stub's fake
+# rule) is kept, never silently dropped.
+ALL_RULE_IDS: frozenset[str] = frozenset(
+    [n for n, _p, _s in _SECRET_PATTERN_DEFS]
+    + [n for n, _p, _s in _DANGEROUS_PATTERN_DEFS]
+    + [r for r, _x, _s, _d in _DEEP_PATTERN_DEFS]
+    + [c["id"] for c in _CHAIN_DEFS]
+    + ["python_syntax_error"]
+)
 
 
 def _scan_round1(
@@ -516,8 +793,9 @@ def _scan_round1(
     *,
     deadline: float,
 ) -> tuple[list[dict], dict[str, str]]:
-    """Round 1 — fast surface sweep using the existing 25-pattern
-    catalog (`scan_text`).  Returns `(findings, file_text_index)`.
+    """Round 1 — fast surface sweep using the full R1 catalog
+    (`scan_text`; see pattern_counts() for the live total).
+    Returns `(findings, file_text_index)`.
 
     The file_text_index is reused by Round 2 so we don't re-fetch /
     re-decode the same content.  Bails out and returns whatever it
@@ -532,7 +810,8 @@ def _scan_round1(
         hits = scan_text(content or "", filepath=path)
         if _is_safe_demo_path(path):
             for f in hits:
-                if f.get("severity") in ("CRITICAL", "HIGH"):
+                if (f.get("severity") in ("CRITICAL", "HIGH")
+                        and f.get("name") not in VENDOR_SECRET_IDS):
                     f["severity"]         = "INFO"
                     f["downgraded"]       = True
                     f["downgrade_reason"] = "demo/test/example file"
@@ -547,18 +826,48 @@ def _scan_round2_file(
     deadline: float,
 ) -> list[dict]:
     """Run the deep-pattern catalog against one file and attach
-    ±10-line context to every hit."""
+    ±10-line context to every hit.
+
+    2026-11-27 Vanguard 28 — the old `break` (one hit per rule per
+    file) hid repeat offences: now up to _R2_MAX_HITS_PER_RULE (3)
+    hits per rule per file (lpdos: 1 — it is a file-level property).
+    FP filters: sql_percent_format skips LIKE/ILIKE lines; replay_jwt
+    skips lines whose payload already carries a jti; lpdos skips the
+    whole file when a body-size limit is mounted. Snippets and context
+    lines are masked (a deep secret hit's raw line is a secret)."""
     if _time.monotonic() >= deadline:
         return []
     lines = (text or "").split("\n")
     out: list[dict] = []
+    _body_limited = _file_has_body_limit(text)
     for rid, pattern, severity, desc in _DEEP_PATTERNS:
+        # LPDoS is a file-level property — one finding per file, and
+        # none at all when the file mounts a body-size limit.
+        if rid == "lpdos_no_body_limit_deep" and _body_limited:
+            continue
+        cap = 1 if rid == "lpdos_no_body_limit_deep" else _R2_MAX_HITS_PER_RULE
+        hits = 0
         for i, line in enumerate(lines, start=1):
+            if hits >= cap:
+                break
             if _time.monotonic() >= deadline:
                 return out
             if "vanguard: ignore" in line or "security-scan: ignore" in line:
                 continue
             if not pattern.search(line):
+                continue
+            # FP: %-format SQL with LIKE/ILIKE is a pattern, not an
+            # injection sink — the %s is the LIKE operand.
+            if rid == "sql_percent_format_deep" and re.search(
+                r"(?i)\b(like|ilike)\b", line
+            ):
+                continue
+            # FP: a JWT payload that already carries a jti is not a
+            # replay risk (the text-scanner twin always had this
+            # post-filter; the deep rule did not).
+            if rid == "replay_jwt_no_jti_deep" and (
+                '"jti"' in line or "'jti'" in line
+            ):
                 continue
             ctx_start = max(0, i - 11)            # 1-indexed → 0-indexed slice
             ctx_end   = min(len(lines), i + 10)
@@ -569,13 +878,14 @@ def _scan_round2_file(
                 "filepath":     path,
                 "file":         path,
                 "line":         i,
-                "snippet":      line.strip()[:200],
+                "snippet":      redact_secrets_in_text(line.strip()[:200]),
                 "desc":         desc,
                 "source":       "vanguard_deep",
-                "context_lines": lines[ctx_start:ctx_end],
+                "context_lines": [redact_secrets_in_text(ln)
+                                  for ln in lines[ctx_start:ctx_end]],
                 "context_range": [ctx_start + 1, ctx_end],
             })
-            break  # one hit per rule per file is enough for the report
+            hits += 1
     return out
 
 
@@ -630,11 +940,23 @@ def _dedup_findings(findings: list[dict]) -> list[dict]:
 def run_two_round_scan(
     file_blocks: dict[str, str],
     *,
-    round1_budget: float = 10.0,
-    round2_budget: float = 20.0,
+    round1_budget: float = 15.0,
+    round2_budget: float = 25.0,
+    block_level: str = "HIGH",
 ) -> dict:
     """Run the two-round Vanguard pipeline over a dict of
     `{path: file_text}` blobs.
+
+    2026-11-27 Vanguard 28 — `block_level` gates which passes run:
+      • OFF / LOW → R1 only (LOW = vendor-shaped secrets, applied by
+        the caller via the level filter in verify_patch; R2 and chains
+        do not run at this level).
+      • MEDIUM    → R1 + R2 over MEDIUM+ files, R2 findings kept only
+        at CRITICAL/HIGH; no chains.
+      • HIGH      → full R1 + R2 over MEDIUM+ files (all R2 severities)
+        + chain detection. This is the default (previous behaviour,
+        except R2 file selection widened CRITICAL/HIGH → MEDIUM+ and
+        budgets raised 10/20 → 15/25).
 
     Returns a dict with:
       • round1_findings: list (every Round-1 hit, severity unchanged)
@@ -657,6 +979,21 @@ def run_two_round_scan(
 
     r1_findings, file_index = _scan_round1(file_blocks, deadline=r1_deadline)
 
+    # 2026-11-27 — OFF/LOW run R1 only: no deep pass, no chains.
+    _level = (block_level or "HIGH").upper()
+    if _level in ("OFF", "LOW"):
+        elapsed = _time.monotonic() - started
+        return {
+            "round1_findings": r1_findings,
+            "round2_findings": [],
+            "chain_findings":  [],
+            "combined":        _dedup_findings(r1_findings),
+            "round2_skipped":  True,
+            "files_round1":    len(file_index),
+            "files_round2":    0,
+            "elapsed_seconds": round(elapsed, 3),
+        }
+
     # Bail-out: if Round 1 alone burned > combined budget, skip R2
     # entirely.  This guards against pathological repos.
     if _time.monotonic() >= combined_deadline:
@@ -672,11 +1009,14 @@ def run_two_round_scan(
             "elapsed_seconds": round(elapsed, 3),
         }
 
-    # Round 2 — only files with at least one critical/high finding.
+    # Round 2 — 2026-11-27: every file with at least one MEDIUM+
+    # finding (was CRITICAL/HIGH only — MEDIUM R2 hits like lpdos and
+    # replay_jwt never got their deep pass on files whose R1 worst
+    # finding was MEDIUM).
     flagged_paths: list[str] = sorted({
         f.get("filepath") or f.get("file") or ""
         for f in r1_findings
-        if (f.get("severity") or "").upper() in ("CRITICAL", "HIGH")
+        if (f.get("severity") or "").upper() in ("CRITICAL", "HIGH", "MEDIUM")
     } - {""})
 
     r2_findings: list[dict] = []
@@ -688,14 +1028,24 @@ def run_two_round_scan(
             path, text, deadline=combined_deadline,
         ))
 
+    # MEDIUM keeps R2 CRITICAL/HIGH only; HIGH keeps all R2 severities.
+    if _level == "MEDIUM":
+        r2_findings = [
+            f for f in r2_findings
+            if (f.get("severity") or "").upper() in ("CRITICAL", "HIGH")
+        ]
+
     # Chain detection runs over R1+R2 hits, indexed by file.
+    # MEDIUM does not run chains (HIGH-only per the level contract).
     findings_by_file: dict[str, list[dict]] = {}
     for f in (r1_findings + r2_findings):
         p = f.get("filepath") or f.get("file") or ""
         if not p:
             continue
         findings_by_file.setdefault(p, []).append(f)
-    chain_findings = _detect_chains(findings_by_file)
+    chain_findings = (
+        _detect_chains(findings_by_file) if _level == "HIGH" else []
+    )
 
     combined = _dedup_findings(r1_findings + r2_findings + chain_findings)
     # Severity sort — CRITICAL → HIGH → MEDIUM → LOW → INFO.

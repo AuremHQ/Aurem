@@ -98,13 +98,10 @@ RULES: list[LintRule] = [
         severity="warn",
         file_types=(".py",),
     ),
-    LintRule(
-        name="hardcoded_secret",
-        pattern=r"""(?i)(?:password|secret|api[_-]?key|apikey|token|bearer)\s*=\s*['"][^'"]{8,}['"]""",
-        message="Possible hardcoded secret detected. Use environment variable instead.",
-        severity="block",
-        file_types=(".py", ".js", ".ts", ".jsx", ".tsx", ".env"),
-    ),
+    # 2026-11-27 Vanguard 28 — the hardcoded_secret rule is DELETED:
+    # it duplicated the Vanguard overlay below (one secret = two
+    # blocks, C13). Secret detection now lives only in
+    # services/vanguard_scanner.py; the overlay is the single path.
 ]
 
 
@@ -153,9 +150,16 @@ def lint_file(filepath: str, content: str) -> list[LintIssue]:
     return issues
 
 
-def lint_file_blocks(file_blocks: dict) -> dict:
+def lint_file_blocks(file_blocks: dict, block_level: str = "MEDIUM") -> dict:
     """
     Lints all file blocks from an agent output.
+
+    `block_level` (2026-11-27 Vanguard 28) makes the Vanguard overlay
+    mode-aware: OFF skips the overlay entirely; LOW reports vendor-
+    shaped secrets only; MEDIUM blocks on CRITICAL; HIGH blocks on
+    CRITICAL+HIGH. Default MEDIUM preserves the previous behaviour
+    (CRITICAL → block). Callers without a mode (lint preview, the
+    pipeline gate) keep the default.
 
     Returns:
         {
@@ -176,20 +180,35 @@ def lint_file_blocks(file_blocks: dict) -> dict:
     # Iter 44 — Vanguard 007 scanner: layered scan for high-confidence
     # secret detection (AWS / GitHub / Stripe / Google / OpenAI / SendGrid /
     # Slack / private-key PEM / DB connection strings / eval / pickle / etc).
-    # Treat all "CRITICAL" Vanguard findings as commit-blockers.
-    try:
-        from services.vanguard_scanner import scan_file_blocks as _vg_scan
-        for f in _vg_scan(file_blocks):
-            all_issues.append(LintIssue(
-                filepath=f["filepath"],
-                rule=f"vg.{f['name']}",
-                message=f"Vanguard 007 — {f['name']} ({f['severity']})",
-                line_number=f["line"],
-                line_content=f["snippet"],
-                severity="block" if f["severity"] == "CRITICAL" else "warn",
-            ))
-    except Exception:
-        pass
+    # 2026-11-27 Vanguard 28 — mode-aware: the overlay is the SINGLE
+    # secret path now that hardcoded_secret is deleted, and its block
+    # decision follows the active level (OFF skips it; LOW reports
+    # vendor-shaped secrets only; MEDIUM blocks CRITICAL; HIGH blocks
+    # CRITICAL+HIGH). Secret-source findings say "hardcoded secret" in
+    # the message so the block reason names the class.
+    _level = (block_level or "MEDIUM").upper()
+    if _level != "OFF":
+        try:
+            from services import vanguard_scanner as _vg
+            _blocks_sev = {"LOW": ("CRITICAL",), "MEDIUM": ("CRITICAL",),
+                           "HIGH": ("CRITICAL", "HIGH")}.get(_level, ("CRITICAL",))
+            for f in _vg.scan_file_blocks(file_blocks):
+                if _level == "LOW" and f["name"] not in _vg.LOW_SECRET_IDS:
+                    continue
+                _is_secret = f.get("source") == "vanguard_007_secrets"
+                all_issues.append(LintIssue(
+                    filepath=f["filepath"],
+                    rule=f"vg.{f['name']}",
+                    message=f"Vanguard 007 — {f['name']} ({f['severity']})"
+                            + (" — hardcoded secret" if _is_secret else ""),
+                    line_number=f["line"],
+                    line_content=f["snippet"],
+                    severity="block" if f["severity"] in _blocks_sev else "warn",
+                ))
+        # The overlay is best-effort: a scanner failure must not break
+        # linting; the file's own lint rules above still run.
+        except Exception:  # noqa: BLE001, S110
+            pass
 
     blocked_issues  = [i for i in all_issues if i.severity == "block"]
     warning_issues  = [i for i in all_issues if i.severity == "warn"]

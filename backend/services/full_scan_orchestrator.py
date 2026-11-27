@@ -4,7 +4,7 @@ services/full_scan_orchestrator.py  —  Directive Session 2 · Part B
 
 Runs the FULL 4-category Full Scan on a set of files. Categories:
 
-    1. Vanguard (25-pattern security regex catalog) — existing.
+    1. Vanguard (56-pattern security regex catalog) — existing.
     2. Bug Hunt (50+ Nuclei-inspired static rules)  — existing.
     3. HTTP security headers (repo-level FastAPI/Flask/Express).
     4. Docker CIS (Dockerfile + compose file checks).

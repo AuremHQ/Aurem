@@ -307,7 +307,7 @@ TOOLS: list[dict[str, Any]] = [
     _tool(
         'run_vanguard_scan',
         (
-            "Run a 25-pattern Vanguard security scan on the connected repo. "
+            "Run a 56-pattern Vanguard security scan on the connected repo. "
             "Use before shipping or when checking vulnerabilities. "
             "Returns scan_id in <1s (async — poll get_scan_status)."
         ),
