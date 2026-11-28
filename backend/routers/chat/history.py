@@ -5,6 +5,7 @@ Split from the former routers/chat.py god-file (4184 lines) on
 """
 from __future__ import annotations
 import logging
+import re
 import time
 from typing import Optional
 
@@ -17,6 +18,16 @@ from services.user_response_sanitizer import sanitize_provider_for_user
 from . import router
 
 logger = logging.getLogger(__name__)
+
+
+# 2026-11-27 — Ask Advisor leak fix: the FloatingORAButton panel
+# mints a fresh `ora-panel-<timestamp>-<random>` session id on every
+# open. Those sessions are advisor-only and must never appear in the
+# main window's "Previous chats" list (opening one loads it into the
+# main chat). Shared sessions (AskAdvisorReal reusing the main id)
+# are NOT excluded here — only their advisor turns are filtered, at
+# GET /chat/history.
+_ADVISOR_SESSION_PREFIX_RE = re.compile(r"^ora-panel-")
 
 
 # 2026-09-11 — defense-in-depth for the chat date-bucket/ordering bug
@@ -71,6 +82,11 @@ async def chat_history(
     # null on out-of-range positional $set from stale clients). One
     # null crashed the frontend hydration entirely.
     turns = [t for t in turns if isinstance(t, dict) and t.get("role")]
+    # 2026-11-27 — Ask Advisor leak fix: advisor turns (tagged
+    # `ora_panel: true` at persist time) never show in the main
+    # window's history. Turns saved before the tag existed have no
+    # field and keep showing as main-chat turns.
+    turns = [t for t in turns if not t.get("ora_panel")]
     turns = sort_turns_by_ts(turns)
     # 2026-09-28 MASTER TASK Part A1 — GET /chat/history round-trips
     # whatever _persist_turn stored verbatim, including the raw
@@ -108,8 +124,15 @@ async def chat_sessions_list(
     # Iter 356 — our own E2E test runs (prod smoke suite) create
     # "prod-e2e-*" sessions that must never pollute the user-facing
     # sidebar. Filter them out of every list response.
+    # 2026-11-27 — same treatment for `ora-panel-*` advisor sessions
+    # (see _ADVISOR_SESSION_PREFIX_RE above). Combined via $and so the
+    # list still returns 20 real sessions instead of shorting when an
+    # advisor session crowds the top 20.
     from services.test_accounts import E2E_SESSION_PREFIX_RE
-    q["session_id"] = {"$not": E2E_SESSION_PREFIX_RE}
+    q["$and"] = [
+        {"session_id": {"$not": E2E_SESSION_PREFIX_RE}},
+        {"session_id": {"$not": _ADVISOR_SESSION_PREFIX_RE}},
+    ]
     if project_id == "home":
         # Home tab shows un-pinned sessions PLUS legacy sessions that have
         # no project_id field at all (created before per-project chats).

@@ -142,15 +142,22 @@ async def prior_turn_had_fix_signal(db, session_id: str, user_id: str) -> bool:
     try:
         doc = await db.chat_sessions.find_one(
             {"session_id": session_id, "user_id": user_id},
-            {"_id": 0, "turns": {"$slice": -1}},
+            # 2026-11-27 — Ask Advisor leak fix: widen the slice from
+            # -1 to -50 and scan backwards for the last MAIN-chat
+            # assistant turn. An advisor turn must never count as the
+            # prior turn (its handoff/fix text is not main-chat state).
+            # Turns saved before the tag existed have no field and
+            # still count (fail-open, as before).
+            {"_id": 0, "turns": {"$slice": -50}},
         )
         turns = (doc or {}).get("turns") or []
-        if not turns:
-            return False
-        last = turns[-1]
-        if not isinstance(last, dict) or last.get("role") != "assistant":
-            return False
-        return response_has_fix_signal(last.get("content") or "")
+        for last in reversed(turns):
+            if not isinstance(last, dict):
+                continue
+            if last.get("role") != "assistant" or last.get("ora_panel"):
+                continue
+            return response_has_fix_signal(last.get("content") or "")
+        return False
     except Exception:
         return False
 
@@ -170,15 +177,20 @@ async def prior_turn_context_text(db, session_id: str, user_id: str) -> str | No
     try:
         doc = await db.chat_sessions.find_one(
             {"session_id": session_id, "user_id": user_id},
-            {"_id": 0, "turns": {"$slice": -1}},
+            # 2026-11-27 — Ask Advisor leak fix: same widened slice +
+            # backwards scan as prior_turn_had_fix_signal above — an
+            # advisor turn must never become the prior-turn context for
+            # a main-chat reply.
+            {"_id": 0, "turns": {"$slice": -50}},
         )
         turns = (doc or {}).get("turns") or []
-        if not turns:
-            return None
-        last = turns[-1]
-        if not isinstance(last, dict) or last.get("role") != "assistant":
-            return None
-        return last.get("content") or None
+        for last in reversed(turns):
+            if not isinstance(last, dict):
+                continue
+            if last.get("role") != "assistant" or last.get("ora_panel"):
+                continue
+            return last.get("content") or None
+        return None
     except Exception:
         return None
 
@@ -310,6 +322,57 @@ def is_confirmation_reply(user_message: str) -> bool:
     deliberately whole-message-anchored so a real, longer question
     that happens to contain "ok" or "confirm" is never matched."""
     return bool(_CONFIRMATION_RE.match(user_message or ""))
+
+
+# 2026-11-27 — offer tracking (Issues 2/4). The assistant's last
+# reply often ends with an offer question ("Would you like me to
+# find the contact page?", "Want me to continue?"). A bare "yes" (or
+# the Continue button) after it means "do that thing" — but no code
+# ever stored the offer, so "yes" fell through to casual and the
+# model improvised "I have not checked this yet" instead of acting.
+# These helpers let resolve_pre_llm route the confirmation to the
+# tool pipeline instead. Only the TRAILING offer counts — an offer
+# buried mid-reply that the user already moved past must not hijack
+# a later "yes".
+_OFFER_TASK_RE = re.compile(
+    r"(?:would you like me to|shall i|want me to|should i)\s+(.+?)\?",
+    re.IGNORECASE | re.DOTALL,
+)
+# The Continue button's exact prompt (ChatPanel.jsx continueTurn
+# sends this verbatim).
+_CONTINUE_PHRASE = "please continue from where you left off."
+
+
+def extract_offer_task(prior_assistant_text: str) -> str | None:
+    """Return the task behind the assistant's last offer question, or
+    None when the prior turn ended with no offer."""
+    text = (prior_assistant_text or "").strip()
+    if not text:
+        return None
+    tail = text[-500:]
+    matches = list(_OFFER_TASK_RE.finditer(tail))
+    if not matches:
+        return None
+    task = (matches[-1].group(1) or "").strip()
+    # "help you find X" / "help me find X" → the action itself.
+    task = re.sub(r"^help (?:you|me)\s+", "", task, flags=re.IGNORECASE)
+    task = " ".join(task.strip().rstrip(".").split())
+    return task or None
+
+
+def is_continue_prompt(user_message: str) -> bool:
+    """True iff the message is the Continue button's exact prompt."""
+    return (user_message or "").strip().rstrip(".").lower() == _CONTINUE_PHRASE.rstrip(".")
+
+
+def offer_confirmation_task(user_message: str, prior_assistant_text: str) -> str | None:
+    """The offered task the user is accepting, or None. Only when the
+    user's message is a bare confirmation ("yes") or the Continue
+    button's prompt, AND the prior assistant turn ended with an offer
+    question (see extract_offer_task)."""
+    if not (is_confirmation_reply(user_message) or is_continue_prompt(user_message)):
+        return None
+    return extract_offer_task(prior_assistant_text)
 
 
 def response_seems_mismatched(

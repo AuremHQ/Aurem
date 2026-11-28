@@ -139,6 +139,13 @@ async def resolve_pre_llm(
     fired and the caller should use THAT as the turn's result
     instead — and must NEVER hand this turn to the model."""
     result = None
+    # 2026-11-27 — offer confirmation (Issues 2/4): a bare "yes" (or
+    # the Continue button) after the assistant offered something
+    # ("Would you like me to…?", "Want me to continue?") means "do
+    # that thing". Computed up front because step 1 below may need it
+    # to tell a pending-action confirm apart from an offer answer.
+    from services.response_confidence import offer_confirmation_task
+    _offer_task = offer_confirmation_task(body.prompt or "", prior_turn_text or "")
 
     # 0) Required-tool-call pre-check (Part B3) — deterministic, runs
     # BEFORE the confirm-boundary and BEFORE any LLM call. If the
@@ -191,6 +198,19 @@ async def resolve_pre_llm(
             db, user=user, session_id=body.session_id, project_id=body.project_id,
             prompt=body.prompt or "", bin_ctx=bin_ctx,
         )
+        # 2026-11-27 (Issue 4) — step 1 answers "yes" with "I don't
+        # have a change waiting" when nothing is pending. But when the
+        # immediately-prior turn OFFERED a task, that "yes" was
+        # answering the offer, not confirming a stored action — so
+        # discard ONLY the no-pending result and let the offer
+        # override in step 2 route the turn to the tools. A real
+        # pending action (executed above) or a needs-detail record
+        # keeps its result — only the no-pending provider is
+        # discarded, never an execution.
+        if result is not None and _offer_task:
+            from services.actions.pending_action import PROVIDER_NO_PENDING
+            if result.get("provider") == PROVIDER_NO_PENDING:
+                result = None
 
     # 1.5) 2026-02 — Context-Confusion architecture fix, Part A.
     # Explicit `current_task_state` object, written/read BEFORE any
@@ -225,11 +245,31 @@ async def resolve_pre_llm(
     # so this fills it. No db is added — the analytics-logging gap
     # documented in the module docstring (asymmetry #2) is unchanged.
     _classify_kwargs.setdefault("user_id", (user or {}).get("user_id"))
+    # Offer confirmation (Issues 2/4) — classify the OFFERED task
+    # (_offer_task, computed above), not the bare "yes" — otherwise
+    # "yes" lands casual and the model improvises "I have not checked
+    # this yet" instead of acting.
+    _probe_text = _offer_task or (
+        intent_probe_text if intent_probe_text is not None else (body.prompt or "")
+    )
     intent_result = await _classify_intent(
-        intent_probe_text if intent_probe_text is not None else (body.prompt or ""),
+        _probe_text,
         **_classify_kwargs,
     )
     tier = intent_result.get("tier") or "agentic"
+    if _offer_task and result is None and tier in ("casual", "clarify"):
+        # A confirmed offer is an action — it needs tools. Without
+        # this, "yes" to "Want me to continue?" re-enters the casual
+        # path and announces the next step again instead of doing it
+        # (the Continue loop). Gated on result is None so a
+        # deterministic confirm executed in step 1 keeps its own tier
+        # for logging.
+        tier = "agentic"
+        intent_result = {
+            **intent_result,
+            "tier": "agentic",
+            "signals": (intent_result.get("signals") or []) + ["offer_confirmation_override"],
+        }
 
     # 3) Tier-gated model-mode resolution + the Root-4 honest upgrade
     # offer (see services/mode_routing.py). Runs even when `result`
@@ -361,7 +401,14 @@ async def resolve_pre_llm(
     # which this step never reaches). A message with a real rule-id
     # AND a real path is, by definition, not vague — never let the
     # classifier's tier guess override that.
-    if result is None and tier in ("casual", "clarify") and not ora_panel and not required_read_gate:
+    # `and not has_file_edit_intent(...)` — 2026-11-27 (Issue 2): an
+    # edit request naming a real file ("in readme.md add this line")
+    # can still classify casual when it is not verb-led, and the
+    # casual path is tool-free — it can only ANNOUNCE the edit, which
+    # the Turn-Completion Contract then labels "Incomplete". Such a
+    # message falls through to the tool pipeline instead.
+    from core.intent_gateway import has_file_edit_intent
+    if result is None and tier in ("casual", "clarify") and not ora_panel and not required_read_gate and not has_file_edit_intent(body.prompt or ""):
         from services.response_confidence import is_confirmation_reply, NO_PENDING_FIX_MESSAGE
         if is_confirmation_reply(body.prompt or "") and not prior_fix_signal:
             result = _shape_short_circuit(

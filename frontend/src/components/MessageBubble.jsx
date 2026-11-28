@@ -225,6 +225,12 @@ export function stripHandoffFenceForDisplay(content) {
   if (!content || typeof content !== "string") return content;
   const hadFence = SHIP_FENCE_MARKER.test(content);
   const stripped = content.replace(/```aurem-handoff\s*\n[\s\S]*?```/g, "").trim();
+  // 2026-11-27 — the model sometimes emits one extra backtick after
+  // the closing fence (a 4th backtick); the exact-match replace above
+  // leaves it on screen as a stray "`". Trim one lone trailing
+  // backtick, but only when a real fence was stripped, so ordinary
+  // replies ending in code are untouched.
+  const cleaned = hadFence ? stripped.replace(/`$/, "").trim() : stripped;
   // 2026-09-11 — real bug repro (TC-04, founder screenshot): when the
   // model's ENTIRE reply is JUST the internal aurem-handoff fence
   // (no surrounding prose at all), stripping it for display left
@@ -235,10 +241,10 @@ export function stripHandoffFenceForDisplay(content) {
   // "nothing to show in the bubble itself" display gap. If stripping
   // actually removed a real fence and left nothing behind, show a
   // short, honest one-liner instead of an empty body.
-  if (hadFence && !stripped) {
+  if (hadFence && !cleaned) {
     return "Proposed a change — review it below.";
   }
-  return stripped;
+  return cleaned;
 }
 
 function extractHandoffBrief(content, verifiedPaths) {

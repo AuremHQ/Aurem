@@ -25,6 +25,7 @@ from services.chat_helpers import (
     _maybe_set_title,
     _regenerate_without_recall, _strip_council_block,
     _persist_turn,
+    is_advisor_turn,
     retrieved_context_for_grounding, run_rendering_pipeline,
     scan_findings_context_for_grounding,
 )
@@ -517,7 +518,11 @@ async def _chat_send_render_and_guard_output(body, content, _prior_fix_signal, e
     return (content, _leak_stripped, _length_capped, _output_guard_ref_id)
 
 
-async def _chat_send_finalize_turn(body, content, provider, _wants_maxx, result, _db, user, req_mode, finalize, interaction_request_id, _low_confidence, _ship_suppressed, bin_ctx):
+async def _chat_send_finalize_turn(body, content, provider, _wants_maxx, result, _db, user, req_mode, finalize, interaction_request_id, _low_confidence, _ship_suppressed, bin_ctx, tier=None):
+    # 2026-11-27 — Ask Advisor leak fix: turn.py never rewrites
+    # body.agent, so the advisor flag can be read straight off body
+    # here (unlike stream.py, where preflight rewrites it).
+    _is_advisor = is_advisor_turn(body)
     watchdog = None
     is_new_maxx_pill = (body.mode or "").lower() == "maxx"
     if body.maxx_mode and content.strip() and not is_new_maxx_pill:
@@ -560,7 +565,8 @@ async def _chat_send_finalize_turn(body, content, provider, _wants_maxx, result,
                         project_id=body.project_id,
                         low_confidence=_low_confidence,
                         ship_suppressed=_ship_suppressed,
-                        bin_ctx=bin_ctx, interaction=interaction)
+                        bin_ctx=bin_ctx, interaction=interaction,
+                        ora_panel=_is_advisor, tier=tier)
     return (watchdog, provider, interaction)
 
 
@@ -585,7 +591,8 @@ async def _chat_send_post_turn_bookkeeping(_db, user, body, result, content, pro
         logger.debug("task_chain logging skipped (chat_send): %r", _tc_exc)
     if body.session_id:
         asyncio.create_task(
-            _maybe_set_title(user["user_id"], body.session_id, body.prompt)
+            _maybe_set_title(user["user_id"], body.session_id, body.prompt,
+                             ora_panel=is_advisor_turn(body))
         )
     tokens_remaining = await _deduct_tokens(user["user_id"], content)
     # 2026-08-19 P0 fix — this was the main customer chat path with
@@ -921,7 +928,7 @@ async def chat_send(
     # Iter 161 — same legacy-only gating as the streaming path: skip
     # when the new mode="maxx" pill is set because Claude already wrote
     # the code via use_code_model.
-    watchdog, provider, interaction = await _chat_send_finalize_turn(body, content, provider, _wants_maxx, result, _db, user, req_mode, finalize, interaction_request_id, _low_confidence, _ship_suppressed, bin_ctx)
+    watchdog, provider, interaction = await _chat_send_finalize_turn(body, content, provider, _wants_maxx, result, _db, user, req_mode, finalize, interaction_request_id, _low_confidence, _ship_suppressed, bin_ctx, tier=_tier)
     # 2026-09-08 — task-chain logging (structured, not raw CoT).
     tokens_remaining = await _chat_send_post_turn_bookkeeping(_db, user, body, result, content, provider, extra_sys, req_mode, t_preflight, t_start, t_llm, pid)
     return {
