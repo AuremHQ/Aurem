@@ -745,11 +745,17 @@ async def _generate_title(first_user_msg: str) -> str:
 
 
 async def _maybe_set_title(user_id: str, session_id: str,
-                            first_user_msg: str) -> None:
+                            first_user_msg: str, ora_panel: bool = False) -> None:
     """If this session has no title yet, generate one and store it.
-    Safe to call as a background task (fire-and-forget)."""
+    Safe to call as a background task (fire-and-forget).
+    2026-11-27 — an advisor turn must not title the session: the
+    advisor's first question would otherwise become the "Previous
+    chats" title for a shared session id (and for ora-panel-*
+    sessions, which the sessions list now excludes anyway)."""
     db = get_db()
     if db is None or not session_id:
+        return
+    if ora_panel:
         return
     try:
         doc = await db.chat_sessions.find_one(
@@ -837,6 +843,24 @@ def _strip_council_block(extra_sys: str, council_block: str) -> str:
 CHAT_TURNS_RETENTION = 200
 
 
+def is_advisor_turn(body) -> bool:
+    """True when a chat request comes from the Ask Advisor panel.
+
+    Two panel implementations send two different signals (2026-11-27
+    leak fix): AskAdvisorReal sets `ora_panel=true` (reusing the main
+    session id); the FloatingORAButton panel mints a fresh
+    `ora-panel-*` session id and sends `agent="ora"`. The main chat
+    never sends either (api.js defaults: ora_panel=false,
+    agent="auto"), so both signals are reliable advisor markers.
+    Capture this BEFORE `_chat_stream_setup_ora_agent` runs — it
+    rewrites agent "ora"→"auto" for non-founders, which would erase
+    the second signal by persist time.
+    """
+    if getattr(body, "ora_panel", False):
+        return True
+    return (getattr(body, "agent", "") or "").lower() == "ora"
+
+
 async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
                         assistant_reply: str, provider: str,
                         watchdog: Optional[dict] = None,
@@ -849,7 +873,9 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
                         interrupted: bool = False,
                         interaction: Optional[dict] = None,
                         stream_state: Optional[str] = None,
-                        scope_confirmation: dict | None = None) -> None:
+                        scope_confirmation: dict | None = None,
+                        ora_panel: bool = False,
+                        tier: Optional[str] = None) -> None:
     """Append user+assistant turns to db.chat_sessions, capped at 40 turns.
     Tags the session with the project it belongs to (None == Home/global).
     Iter 51 — when `shipped_task_id` is set (e.g. Mode D→C auto-handoff),
@@ -921,6 +947,14 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
             "scope_confirmation_summary": scope_confirmation.get("summary"),
             "scope_execution": scope_confirmation.get("execution"),
         })
+    # 2026-11-27 — Ask Advisor leak fix: tag advisor turns so the
+    # read side (GET /chat/history, prior-turn context, sessions list)
+    # can tell them apart from main-chat turns. Old turns without the
+    # field keep showing as main-chat turns (fail-open for history).
+    user_turn = {"role": "user", "content": user_prompt, "ts": now}
+    if ora_panel:
+        user_turn["ora_panel"] = True
+        assistant_turn["ora_panel"] = True
     set_on_insert = {
         "session_id": session_id,
         "user_id": user_id,
@@ -929,8 +963,12 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
     }
     set_fields = {
         "updated_at": now,
-        "last_message": preview,
     }
+    if not ora_panel:
+        # An advisor turn must not become the session's list preview —
+        # the advisor's text would otherwise leak into "Previous chats"
+        # for a shared (AskAdvisorReal) session id.
+        set_fields["last_message"] = preview
     try:
         await db.chat_sessions.update_one(
             {"session_id": session_id, "user_id": user_id},
@@ -940,7 +978,7 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
                 "$push": {
                     "turns": {
                         "$each": [
-                            {"role": "user", "content": user_prompt, "ts": now},
+                            user_turn,
                             assistant_turn,
                         ],
                         # Iter 329 · Chat-history B3 fix — write cap
@@ -988,10 +1026,15 @@ async def _persist_turn(user_id: str, session_id: str, user_prompt: str,
         # guard-based behavior).
         try:
             from services.commit_boundary import propose_from_turn
-            if not scope_confirmation:
+            # 2026-11-27 — advisor turns and tool-free (casual) turns
+            # must never register a pending action: advisor content is
+            # not main-chat state, and a casual reply has no tools, so
+            # a fence in it is not an executable proposal.
+            if not scope_confirmation and not ora_panel and tier != "casual":
                 await propose_from_turn(
                     db, session_id=session_id, user_id=user_id, project_id=project_id,
                     provider=provider, assistant_reply=assistant_reply, bin_ctx=bin_ctx,
+                    user_prompt=user_prompt,
                 )
         except Exception as e:                             # noqa: BLE001
             logger.debug("pending_action registration skipped: %r", e)

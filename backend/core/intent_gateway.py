@@ -183,6 +183,21 @@ def _first_meaningful_token(tokens: list[str]) -> str:
 #  Heuristic classifier — returns (tier, confidence, signals).
 # ─────────────────────────────────────────────────────────────────────
 
+def has_file_edit_intent(message: str) -> bool:
+    """2026-11-27 (Issue 2) — True when the message names a real file
+    AND contains a genuine edit verb anywhere ("in readme.md add this
+    line", "update services/llm.py"). Such a message is an edit
+    request, not chit-chat: the casual path is tool-free and can only
+    announce the edit instead of doing it. Used by
+    routers/chat_pre_llm.py step 5 to skip the casual short-circuit.
+    A file mention WITHOUT an edit verb ("what does readme.md say?")
+    is not edit intent — the query tier already handles reads."""
+    text = (message or "")
+    if not _FILE_REF_RE.search(text):
+        return False
+    return any(t in _AGENTIC_VERBS for t in _tokens(text))
+
+
 def _classify_heuristic(message: str, pending_fix: bool = False) -> dict[str, Any]:
     """Pure heuristic pass.  Returns a dict with:
         {tier, confidence, method:"heuristic", signals: [...]}

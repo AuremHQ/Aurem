@@ -56,7 +56,7 @@ async def consume_worker_queue(state: StreamState, worker_t, ticker_t,
     with 1+ tool calls, or a suppressed attempt that still has 0 tool
     calls, is UNCHANGED — identical to before this flag existed.
     """
-    from services.chat_helpers import _persist_turn
+    from services.chat_helpers import _persist_turn, is_advisor_turn
     from services.interaction_contract import enabled as _ic_enabled
 
     q = state.q
@@ -190,6 +190,11 @@ async def consume_worker_queue(state: StreamState, worker_t, ticker_t,
                                               _ic_failure_mode)
                         if _ic_enabled() else None
                     ),
+                    # 2026-11-27 — Ask Advisor leak fix: prefer the
+                    # flag captured at chat_stream top (state.is_advisor)
+                    # — body.agent may already be rewritten to "auto"
+                    # for non-founders by the time a timeout fires.
+                    ora_panel=getattr(state, "is_advisor", False) or is_advisor_turn(body),
                 )
             except Exception:
                 logger.exception("timeout persist_turn failed")

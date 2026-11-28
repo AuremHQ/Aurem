@@ -6214,7 +6214,6 @@ export default function ChatPanel({ sessionId, onTurnSaved, activeProject, ready
           entirely so the chat column stays clean, and let the
           composer grow taller (3-line min) to give more room for
           the user's question. */}
-      \1
             {execMode === EXEC_MODES.LOOP && loopPhase !== "idle" && loopPhase !== "done" && loopPhase !== "cancelled" && loopPhase !== "failed" && progressPct > 0 && (
               <ProgressState fileName="Fix loop" percent={progressPct} onCancel={() => { loopAbortRef.current?.abort("loop_cancelled"); setLoopPhase("cancelled"); }} />
             )}

@@ -26,6 +26,7 @@ from services.chat_helpers import (
     classify_intent,
     _maybe_set_title,
     _persist_turn,
+    is_advisor_turn,
     retrieved_context_for_grounding, run_rendering_pipeline,
     scan_findings_context_for_grounding,
 )
@@ -882,6 +883,13 @@ async def chat_stream(
     except Exception:                                          # noqa: BLE001
         _user_tz = None
     _r10_turn_t0, user, finalize, interaction_request_id = await _chat_stream_authenticate_and_tag_request(body, authorization)
+    # 2026-11-27 — Ask Advisor leak fix: capture the advisor flag
+    # HERE, before _chat_stream_run_preflight (line ~966) — its
+    # _chat_stream_setup_ora_agent rewrites agent "ora"→"auto" for
+    # non-founders, which would erase the panel signal by persist
+    # time. Every _persist_turn / _maybe_set_title call below uses
+    # this value, never body.agent / body.ora_panel directly.
+    is_advisor = is_advisor_turn(body)
     # P1F (ORA audit P3) — [project_id, session_id] ownership guard at
     # the router boundary, immediately after auth and before the mock
     # short-circuit / scope-resume / retry-replay branches: a
@@ -1017,6 +1025,7 @@ async def chat_stream(
                 provider="aurem-clarify-fix",
                 project_id=body.project_id,
                 interaction=clarification_contract,
+                ora_panel=is_advisor,
             )
             yield f"data: {_j.dumps({'done': True, 'content': _clarify_text, **({'interaction': clarification_contract} if clarification_contract else {})})}\n\n"
         return StreamingResponse(
@@ -1068,6 +1077,11 @@ async def chat_stream(
             plain_english_active=_plain_english_active, is_founder=_is_founder,
             hard_timeout_s=HARD_TIMEOUT_S, soft_timeout_s=SOFT_TIMEOUT_S,
             interaction_request_id=interaction_request_id,
+            # 2026-11-27 — Ask Advisor leak fix: the advisor flag as
+            # captured at the top of chat_stream (before preflight
+            # rewrites agent "ora"→"auto"). The watchdog reads this so
+            # a timed-out advisor turn is still tagged on persist.
+            is_advisor=is_advisor,
         )
         state.t_start = _t.monotonic()
         # INTERACTION_CONTRACT_V1 P1 — durable acceptance record BEFORE
@@ -1203,6 +1217,7 @@ async def chat_stream(
                                 "", prompt=body.prompt, session_id=body.session_id or "",
                                 request_id=interaction_request_id,
                             ),
+                            ora_panel=is_advisor,
                         )
                     except Exception:
                         logger.debug("chat_reliability record_cancelled skipped (disconnect while waiting)")
@@ -1462,6 +1477,7 @@ async def chat_stream(
                             _emitted_so_far, prompt=body.prompt, session_id=body.session_id or "",
                             request_id=interaction_request_id,
                         ),
+                        ora_panel=is_advisor,
                     )
                 except Exception:
                     logger.exception("mid-stream-drop persist_turn failed")
@@ -1613,7 +1629,8 @@ async def chat_stream(
 
         if body.session_id:
             asyncio.create_task(
-                _maybe_set_title(user_id, body.session_id, body.prompt)
+                _maybe_set_title(user_id, body.session_id, body.prompt,
+                                 ora_panel=is_advisor)
             )
         tokens_remaining = await _deduct_tokens(user_id, content)
         # 2026-08-19 P0 fix — same cost-logging gap as /chat/send.
@@ -1758,6 +1775,8 @@ async def chat_stream(
                             ship_suppressed=state.ship_suppressed,
                             bin_ctx=bin_ctx, interaction=interaction,
                             stream_state=_stream_state if _ic_enabled() else None,
+                            ora_panel=is_advisor,
+                            tier=(result or {}).get("tier"),
                             scope_confirmation={
                                 "proposal_id": result["scope_confirmation_proposal_id"],
                                 "awaiting": True,

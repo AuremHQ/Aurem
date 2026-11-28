@@ -56,6 +56,13 @@ actionable at all, root-caused via a founder repro on 2 separate
 accounts). CBR-1 is unweakened: both extractors still require the
 extracted value to be uniquely present in the REAL live file before
 anything reaches AWAITING_CONFIRM.
+
+2026-11-27 addendum — `type_="needs_detail"`: a handoff-fence
+proposal with no extractable file path is persisted as a PROPOSED
+doc (never AWAITING_CONFIRM — nothing executable) so a later "yes"
+finds it and is asked for the missing file instead of hitting the
+dead "no change waiting" branch. CBR-1 is unweakened: needs-detail
+docs are memorable, never actionable.
 """
 from __future__ import annotations
 
@@ -89,6 +96,7 @@ NO_PENDING_ACTIONABLE_MESSAGE = (
 PROVIDER_EXECUTOR = "commit-boundary-executor"
 PROVIDER_EXECUTING = "commit-boundary-executing"
 PROVIDER_NO_PENDING = "commit-boundary-no-pending"
+PROVIDER_NEEDS_DETAIL = "commit-boundary-needs-detail"
 PROVIDER_DISAMBIGUATE = "commit-boundary-disambiguate"
 PROVIDER_CANCELLED = "commit-boundary-cancelled"
 PROVIDER_CANCEL_NOOP = "commit-boundary-cancel-noop"
@@ -299,6 +307,10 @@ async def validate_payload(type_: str, payload: dict, *, ctx: Optional[dict] = N
         if plan not in ("starter", "pro", "team"):
             return False, None, "invalid_plan"
         return True, {"plan": plan}, None
+    if type_ == "needs_detail":
+        # Never validatable — needs-detail docs bypass validation in
+        # propose_action; reaching here directly is a caller bug.
+        return False, None, "needs_detail_not_executable"
     return False, None, "unsupported_type"
 
 
@@ -321,6 +333,19 @@ async def propose_action(
         "idempotency_key": uuid.uuid4().hex, "created_at": now, "updated_at": now,
         "expires_at": now + ttl_s, "verification_result": None,
     }
+    if type_ == "needs_detail":
+        # 2026-11-27 (Issue 3) — a vague proposal (a handoff fence
+        # with no file path) has nothing to validate against, but it
+        # must still PERSIST as pending state: otherwise the user's
+        # next "yes" hits the dead "I don't have a change waiting"
+        # branch. Needs-detail docs stay PROPOSED (never
+        # AWAITING_CONFIRM — there is nothing executable yet) and are
+        # resolved by _resolve_confirm_inner asking for the missing
+        # detail instead of executing. Deliberate CBR-1 exception:
+        # the doc is not actionable, only memorable.
+        doc["needs_detail"] = True
+        await db.pending_actions.insert_one(doc)
+        return doc
     ok, validated_payload, reason = await validate_payload(type_, raw_payload, ctx=ctx)
     if ok:
         doc["status"] = STATUS_AWAITING_CONFIRM
@@ -355,6 +380,31 @@ async def get_active_actions(db, *, session_id: str, user_id: str) -> list[dict]
     return active
 
 
+async def get_pending_needs_detail(db, *, session_id: str, user_id: str) -> list[dict]:
+    """PROPOSED needs-detail records for this session (Issue 3) —
+    vague proposals waiting on the user for the missing file/line.
+    Same TTL-expiry posture as get_active_actions: an expired record
+    is cancelled, never answered. Never returns executable actions."""
+    if db is None or not session_id:
+        return []
+    now = time.time()
+    docs = await db.pending_actions.find(
+        {"session_id": session_id, "user_id": user_id,
+         "status": STATUS_PROPOSED, "needs_detail": True},
+    ).to_list(length=50)
+    pending = []
+    for d in docs:
+        if now > float(d.get("expires_at") or 0):
+            await db.pending_actions.update_one(
+                {"id": d["id"], "status": STATUS_PROPOSED},
+                {"$set": {"status": STATUS_CANCELLED, "cancel_reason": "ttl_expired",
+                          "updated_at": now}},
+            )
+            continue
+        pending.append(d)
+    return pending
+
+
 async def get_recent_terminal_action(
     db, *, session_id: str, user_id: str, window_s: int = IDEMPOTENCY_ECHO_WINDOW_S,
 ) -> Optional[dict]:
@@ -379,9 +429,21 @@ async def _cancel_actions(db, actions: list[dict], *, reason: str) -> None:
     )
 
 
+def _is_continuation_prompt(user_prompt: str) -> bool:
+    """True when the user's message continues/confirms the previous
+    turn instead of starting something new — such a turn must never
+    auto-cancel a pending action (Issue 3: "Please continue…" wiped
+    a pending change the user was still working through)."""
+    if is_confirm_intent(user_prompt or ""):
+        return True
+    from services.response_confidence import is_continue_prompt
+    return is_continue_prompt(user_prompt or "")
+
+
 async def propose_from_turn(
     db, *, session_id: str, user_id: str, project_id: Optional[str],
     provider: str, assistant_reply: str, bin_ctx=None,
+    user_prompt: str = "",
 ) -> None:
     """Called exactly once per real chat turn (persist-time). This is
     the ONLY place a PendingAction can be created — never from a raw
@@ -423,16 +485,39 @@ async def propose_from_turn(
                 type_="upgrade", raw_payload={"plan": "pro"},
             )
         elif provider not in (PROVIDER_EXECUTOR, PROVIDER_EXECUTING):
-            # No clean (path, old, new) triple or (path, anchor,
-            # content) pair could be extracted from the prose — CBR-1,
-            # no action created at all. The multi-file/complex case
-            # stays button-only (the existing, separately-tested
-            # task-queue pipeline). Cancel any stale pending action
-            # from an earlier, now-superseded turn instead of leaving
-            # it dangling.
-            active = await get_active_actions(db, session_id=session_id, user_id=user_id)
-            if active:
-                await _cancel_actions(db, active, reason="new_unrelated_turn")
+            # 2026-11-27 (Issue 3) — the reply proposed SOMETHING (a
+            # handoff fence) but with no extractable file path, so
+            # CBR-1 forbids an executable action. Persist it as a
+            # needs-detail record instead of dropping it: the user's
+            # next "yes" must find it and be asked for the missing
+            # file, not told "I don't have a change waiting".
+            _fence_m = re.search(
+                r"```aurem-handoff\s*\n(.*?)```", assistant_reply or "", re.DOTALL
+            )
+            if _fence_m:
+                await propose_action(
+                    db, session_id=session_id, user_id=user_id, project_id=project_id,
+                    type_="needs_detail",
+                    raw_payload={
+                        "brief": _fence_m.group(1).strip(),
+                        "reply_excerpt": (assistant_reply or "")[:500],
+                    },
+                    ctx={"user_id": user_id, "project_id": project_id, "bin_ctx": bin_ctx},
+                )
+            elif not _is_continuation_prompt(user_prompt):
+                # No clean (path, old, new) triple or (path, anchor,
+                # content) pair could be extracted from the prose —
+                # CBR-1, no action created at all. The multi-file/
+                # complex case stays button-only (the existing,
+                # separately-tested task-queue pipeline). Cancel any
+                # stale pending action from an earlier, now-superseded
+                # turn instead of leaving it dangling — UNLESS this
+                # turn is a continuation/confirmation ("yes", "Please
+                # continue…"), which must never wipe a pending change
+                # the user is still working through.
+                active = await get_active_actions(db, session_id=session_id, user_id=user_id)
+                if active:
+                    await _cancel_actions(db, active, reason="new_unrelated_turn")
     except Exception as e:                                 # noqa: BLE001
         logger.warning("propose_from_turn failed: %r", e)
 
@@ -749,12 +834,16 @@ async def _resolve_confirm_inner(
     active = await get_active_actions(db, session_id=session_id, user_id=user_id)
 
     if intent == "cancel":
-        if not active:
+        need = await get_pending_needs_detail(db, session_id=session_id, user_id=user_id)
+        if not active and not need:
             return _shape_result(
                 "There's nothing pending to cancel — what would you like to do?",
                 PROVIDER_CANCEL_NOOP,
             )
-        await _cancel_actions(db, active, reason="user_cancelled")
+        if active:
+            await _cancel_actions(db, active, reason="user_cancelled")
+        if need:
+            await _cancel_actions(db, need, reason="user_cancelled")
         return _shape_result("Cancelled — nothing was changed.", PROVIDER_CANCELLED)
 
     # intent == "confirm"
@@ -762,6 +851,18 @@ async def _resolve_confirm_inner(
         recent = await get_recent_terminal_action(db, session_id=session_id, user_id=user_id)
         if recent:
             return _result_from_doc(recent)
+        # 2026-11-27 (Issue 3) — a vague proposal is still pending
+        # as a needs-detail record: don't claim nothing is waiting.
+        # Ask for the missing detail instead, naming the proposal.
+        need = await get_pending_needs_detail(db, session_id=session_id, user_id=user_id)
+        if need:
+            brief = ((need[0].get("payload") or {}).get("brief") or "").strip()
+            detail = (
+                "That change is still waiting on one detail"
+                + (f" — {brief[:300]}" if brief else "")
+                + ". Which file should it go in?"
+            )
+            return _shape_result(detail, PROVIDER_NEEDS_DETAIL)
         return _shape_result(NO_PENDING_ACTIONABLE_MESSAGE, PROVIDER_NO_PENDING)
 
     if len(active) > 1:

@@ -54,7 +54,18 @@ async def casual_direct_reply(prompt: str, prior_assistant_text: str | None = No
         "For this casual message, respond naturally and briefly.\n"
         "Be confident, warm, and direct. Do NOT mention\n"
         "pipelines, agents, or technical systems. Keep your\n"
-        "reply under 2 sentences."
+        "reply under 2 sentences.\n"
+        "\n"
+        # 2026-11-27 — the casual path built its own system prompt
+        # with NO language instruction, so it answered English users
+        # in Devanagari Hindi. Same mirroring rule as the main chat
+        # (services/ora_chat/safety.py), pasted here because this
+        # path never sees that prompt.
+        "Language mirroring (STRICT per-message): detect the language\n"
+        "of EACH incoming user message and reply in that EXACT same\n"
+        "language. English → English. Hindi / Hinglish → Hinglish\n"
+        "(Hindi words in Roman letters, never Devanagari unless the\n"
+        "user wrote Devanagari). Never default to any language."
     )
     # P0 audit fix (2026-11-25, D1) — dynamic clock, REUSED from
     # services/ora_chat/safety.py::build_runtime_context (the same

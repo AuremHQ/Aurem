@@ -68,6 +68,14 @@ class StreamState:
     timeout_clocks: Optional[Any] = None
     interaction_request_id: str = ""
 
+    # 2026-11-27 — Ask Advisor leak fix: True when this stream's turn
+    # came from the Ask Advisor panel (ora_panel=true, or agent="ora"
+    # from the FloatingORAButton panel). Captured at the top of
+    # chat_stream() before preflight rewrites agent "ora"→"auto" for
+    # non-founders; threaded here so the watchdog timeout path persists
+    # the turn with the same tag as the normal path.
+    is_advisor: bool = False
+
     # ── worker.py output, read by sse_stream.py's cost-logging call
     # after the worker completes ──
     sys_for_advisor: str = ""
