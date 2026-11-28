@@ -440,6 +440,40 @@ def _is_continuation_prompt(user_prompt: str) -> bool:
     return is_continue_prompt(user_prompt or "")
 
 
+def _extract_handoff_fence(reply: str) -> Optional[str]:
+    """Body of the first ```aurem-handoff fence in a reply, or None.
+
+    Literal string search only. The previous implementation ran a
+    regex over the assistant reply (user-controlled text) and CodeQL
+    flagged it as a ReDoS risk — a slow polynomial match on a crafted
+    fence line. The fence line must hold nothing but whitespace after
+    the marker, which mirrors the old ```aurem-handoff\\s*\\n(.*?)```
+    shape; the body runs to the first closing fence.
+    """
+    marker = "```aurem-handoff"
+    pos = 0
+    while True:
+        start = reply.find(marker, pos)
+        if start < 0:
+            return None
+        # The whitespace run after the marker must contain a newline
+        # (the fence line holds nothing but whitespace); the body
+        # starts after the LAST newline of that run, so blank lines
+        # right under the marker are skipped, as the old pattern did.
+        i = start + len(marker)
+        j = i
+        while j < len(reply) and reply[j].isspace():
+            j += 1
+        nl = reply.rfind("\n", i, j)
+        if nl < 0:
+            pos = start + len(marker)
+            continue
+        end = reply.find("```", nl + 1)
+        if end < 0:
+            return None
+        return reply[nl + 1:end]
+
+
 async def propose_from_turn(
     db, *, session_id: str, user_id: str, project_id: Optional[str],
     provider: str, assistant_reply: str, bin_ctx=None,
@@ -491,15 +525,13 @@ async def propose_from_turn(
             # needs-detail record instead of dropping it: the user's
             # next "yes" must find it and be asked for the missing
             # file, not told "I don't have a change waiting".
-            _fence_m = re.search(
-                r"```aurem-handoff\s*\n(.*?)```", assistant_reply or "", re.DOTALL
-            )
-            if _fence_m:
+            _fence_body = _extract_handoff_fence(assistant_reply or "")
+            if _fence_body is not None:
                 await propose_action(
                     db, session_id=session_id, user_id=user_id, project_id=project_id,
                     type_="needs_detail",
                     raw_payload={
-                        "brief": _fence_m.group(1).strip(),
+                        "brief": _fence_body.strip(),
                         "reply_excerpt": (assistant_reply or "")[:500],
                     },
                     ctx={"user_id": user_id, "project_id": project_id, "bin_ctx": bin_ctx},
